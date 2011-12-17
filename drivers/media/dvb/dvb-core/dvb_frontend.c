@@ -1111,7 +1111,7 @@ static void dtv_property_dump(struct dtv_property *tvp)
 
 static int is_legacy_delivery_system(fe_delivery_system_t s)
 {
-	if((s == SYS_UNDEFINED) || (s == SYS_DVBC_ANNEX_AC) ||
+	if((s == SYS_UNDEFINED) || (s == SYS_DVBC_ANNEX_A) ||
 	   (s == SYS_DVBC_ANNEX_B) || (s == SYS_DVBT) || (s == SYS_DVBS) ||
 	   (s == SYS_ATSC))
 		return 1;
@@ -1143,8 +1143,7 @@ static void dtv_property_cache_sync(struct dvb_frontend *fe,
 		c->symbol_rate = p->u.qam.symbol_rate;
 		c->fec_inner = p->u.qam.fec_inner;
 		c->modulation = p->u.qam.modulation;
-		c->delivery_system = SYS_DVBC_ANNEX_AC;
-		c->rolloff = ROLLOFF_15; /* implied for Annex A */
+		c->delivery_system = SYS_DVBC_ANNEX_A;
 		break;
 	case FE_OFDM:
 		if (p->u.ofdm.bandwidth == BANDWIDTH_6_MHZ)
@@ -1237,6 +1236,7 @@ static void dtv_property_adv_params_sync(struct dvb_frontend *fe)
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
 	struct dvb_frontend_parameters *p = &fepriv->parameters;
+	u32 rolloff = 0;
 
 	p->frequency = c->frequency;
 	p->inversion = c->inversion;
@@ -1271,6 +1271,23 @@ static void dtv_property_adv_params_sync(struct dvb_frontend *fe)
 		else
 			p->u.ofdm.bandwidth = BANDWIDTH_AUTO;
 	}
+
+	/*
+	 * On DVB-C, the bandwidth is a function of roll-off and symbol rate.
+	 * The bandwidth is required for DVB-C tuners, in order to avoid
+	 * inter-channel noise. Instead of estimating the minimal required
+	 * bandwidth on every single driver, calculates it here and fills
+	 * it at the cache bandwidth parameter.
+	 * While not officially supported, a side effect of handling it at
+	 * the cache level is that a program could retrieve the bandwidth
+	 * via DTV_BANDWIDTH_HZ, wich may be useful for test programs.
+	 */
+	if (c->delivery_system == SYS_DVBC_ANNEX_A)
+		rolloff = 115;
+	if (c->delivery_system == SYS_DVBC_ANNEX_C)
+		rolloff = 113;
+	if (rolloff)
+		c->bandwidth_hz = (c->symbol_rate * rolloff) / 100;
 }
 
 static void dtv_property_cache_submit(struct dvb_frontend *fe)
