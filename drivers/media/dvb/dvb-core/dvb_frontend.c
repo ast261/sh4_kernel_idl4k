@@ -1038,6 +1038,28 @@ static struct dtv_cmds_h dtv_cmds[DTV_MAX_COMMAND + 1] = {
 
 	_DTV_CMD(DTV_ENUM_DELSYS, 0, 0),
 
+	_DTV_CMD(DTV_ATSCMH_PARADE_ID, 1, 0),
+	_DTV_CMD(DTV_ATSCMH_RS_FRAME_ENSEMBLE, 1, 0),
+
+	_DTV_CMD(DTV_ATSCMH_FIC_VER, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_PARADE_ID, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_NOG, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_TNOG, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_SGN, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_PRC, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_RS_FRAME_MODE, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_RS_FRAME_ENSEMBLE, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_RS_CODE_MODE_PRI, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_RS_CODE_MODE_SEC, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_SCCC_BLOCK_MODE, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_SCCC_CODE_MODE_A, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_SCCC_CODE_MODE_B, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_SCCC_CODE_MODE_C, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_SCCC_CODE_MODE_D, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_FIC_ERR, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_CRC_ERR, 0, 0),
+	_DTV_CMD(DTV_ATSCMH_RS_ERR, 0, 0),
+
 	/* Get */
 	[DTV_DISEQC_SLAVE_REPLY] = {
 		.name	= "DTV_DISEQC_SLAVE_REPLY",
@@ -1165,6 +1187,8 @@ static void dtv_property_cache_sync(struct dvb_frontend *fe,
 		break;
 	case FE_ATSC:
 		c->modulation = p->u.vsb.modulation;
+		if (c->delivery_system == SYS_ATSCMH)
+			break;
 		if ((c->modulation == VSB_8) || (c->modulation == VSB_16))
 			c->delivery_system = SYS_ATSC;
 		else
@@ -1484,6 +1508,63 @@ static int dtv_property_process_get(struct dvb_frontend *fe,
 	case DTV_DVBT2_PLP_ID:
 		tvp->u.data = fe->dtv_property_cache.dvbt2_plp_id;
 		break;
+
+	/* ATSC-MH */
+	case DTV_ATSCMH_FIC_VER:
+		tvp->u.data = fe->dtv_property_cache.atscmh_fic_ver;
+		break;
+	case DTV_ATSCMH_PARADE_ID:
+		tvp->u.data = fe->dtv_property_cache.atscmh_parade_id;
+		break;
+	case DTV_ATSCMH_NOG:
+		tvp->u.data = fe->dtv_property_cache.atscmh_nog;
+		break;
+	case DTV_ATSCMH_TNOG:
+		tvp->u.data = fe->dtv_property_cache.atscmh_tnog;
+		break;
+	case DTV_ATSCMH_SGN:
+		tvp->u.data = fe->dtv_property_cache.atscmh_sgn;
+		break;
+	case DTV_ATSCMH_PRC:
+		tvp->u.data = fe->dtv_property_cache.atscmh_prc;
+		break;
+	case DTV_ATSCMH_RS_FRAME_MODE:
+		tvp->u.data = fe->dtv_property_cache.atscmh_rs_frame_mode;
+		break;
+	case DTV_ATSCMH_RS_FRAME_ENSEMBLE:
+		tvp->u.data = fe->dtv_property_cache.atscmh_rs_frame_ensemble;
+		break;
+	case DTV_ATSCMH_RS_CODE_MODE_PRI:
+		tvp->u.data = fe->dtv_property_cache.atscmh_rs_code_mode_pri;
+		break;
+	case DTV_ATSCMH_RS_CODE_MODE_SEC:
+		tvp->u.data = fe->dtv_property_cache.atscmh_rs_code_mode_sec;
+		break;
+	case DTV_ATSCMH_SCCC_BLOCK_MODE:
+		tvp->u.data = fe->dtv_property_cache.atscmh_sccc_block_mode;
+		break;
+	case DTV_ATSCMH_SCCC_CODE_MODE_A:
+		tvp->u.data = fe->dtv_property_cache.atscmh_sccc_code_mode_a;
+		break;
+	case DTV_ATSCMH_SCCC_CODE_MODE_B:
+		tvp->u.data = fe->dtv_property_cache.atscmh_sccc_code_mode_b;
+		break;
+	case DTV_ATSCMH_SCCC_CODE_MODE_C:
+		tvp->u.data = fe->dtv_property_cache.atscmh_sccc_code_mode_c;
+		break;
+	case DTV_ATSCMH_SCCC_CODE_MODE_D:
+		tvp->u.data = fe->dtv_property_cache.atscmh_sccc_code_mode_d;
+		break;
+	case DTV_ATSCMH_FIC_ERR:
+		tvp->u.data = fe->dtv_property_cache.atscmh_fic_err;
+		break;
+	case DTV_ATSCMH_CRC_ERR:
+		tvp->u.data = fe->dtv_property_cache.atscmh_crc_err;
+		break;
+	case DTV_ATSCMH_RS_ERR:
+		tvp->u.data = fe->dtv_property_cache.atscmh_rs_err;
+		break;
+
 	default:
 		r = -1;
 	}
@@ -1641,6 +1722,15 @@ static int dtv_property_process_set(struct dvb_frontend *fe,
 	case DTV_DVBT2_PLP_ID:
 		fe->dtv_property_cache.dvbt2_plp_id = tvp->u.data;
 		break;
+
+	/* ATSC-MH */
+	case DTV_ATSCMH_PARADE_ID:
+		fe->dtv_property_cache.atscmh_parade_id = tvp->u.data;
+		break;
+	case DTV_ATSCMH_RS_FRAME_ENSEMBLE:
+		fe->dtv_property_cache.atscmh_rs_frame_ensemble = tvp->u.data;
+		break;
+
 	default:
 		r = -1;
 	}
