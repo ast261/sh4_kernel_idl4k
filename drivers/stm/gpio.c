@@ -1017,6 +1017,7 @@ static struct stm_system stm_gpio_system = {
 	.name = "gpio",
 	.priority = stm_gpio_pr,
 	.suspend = stm_gpio_suspend,
+	.freeze = stm_gpio_suspend,
 	.restore = stm_gpio_restore,
 };
 
