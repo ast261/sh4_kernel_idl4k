@@ -995,6 +995,8 @@ static struct dtv_cmds_h dtv_cmds[DTV_MAX_COMMAND + 1] = {
 		.set	= 1,
 	},
 
+	_DTV_CMD(DTV_INTERLEAVING, 1, 0),
+
 	_DTV_CMD(DTV_ISDBT_PARTIAL_RECEPTION, 1, 0),
 	_DTV_CMD(DTV_ISDBT_SOUND_BROADCASTING, 1, 0),
 	_DTV_CMD(DTV_ISDBT_SB_SUBCHANNEL_ID, 1, 0),
@@ -1443,6 +1445,9 @@ static int dtv_property_process_get(struct dvb_frontend *fe,
 	case DTV_HIERARCHY:
 		tvp->u.data = fe->dtv_property_cache.hierarchy;
 		break;
+	case DTV_INTERLEAVING:
+		tvp->u.data = fe->dtv_property_cache.interleaving;
+		break;
 
 	/* ISDB-T Support here */
 	case DTV_ISDBT_PARTIAL_RECEPTION:
@@ -1647,6 +1652,9 @@ static int dtv_property_process_set(struct dvb_frontend *fe,
 		break;
 	case DTV_HIERARCHY:
 		fe->dtv_property_cache.hierarchy = tvp->u.data;
+		break;
+	case DTV_INTERLEAVING:
+		fe->dtv_property_cache.interleaving = tvp->u.data;
 		break;
 
 	/* ISDB-T Support here */
