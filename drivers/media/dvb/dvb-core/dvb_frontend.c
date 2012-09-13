@@ -884,6 +884,8 @@ static int dvb_frontend_clear_cache(struct dvb_frontend *fe)
 		fe->dtv_property_cache.layer[i].segment_count = -1;
 	}
 
+	fe->dtv_property_cache.stream_id = NO_STREAM_ID_FILTER;
+
 	return 0;
 }
 
@@ -1035,8 +1037,8 @@ static struct dtv_cmds_h dtv_cmds[DTV_MAX_COMMAND + 1] = {
 	_DTV_CMD(DTV_ISDBT_LAYERC_SEGMENT_COUNT, 0, 0),
 	_DTV_CMD(DTV_ISDBT_LAYERC_TIME_INTERLEAVING, 0, 0),
 
-	_DTV_CMD(DTV_ISDBS_TS_ID, 1, 0),
-	_DTV_CMD(DTV_DVBT2_PLP_ID, 1, 0),
+	_DTV_CMD(DTV_STREAM_ID, 1, 0),
+	_DTV_CMD(DTV_DVBT2_PLP_ID_LEGACY, 1, 0),
 
 	_DTV_CMD(DTV_ENUM_DELSYS, 0, 0),
 
@@ -1504,11 +1506,11 @@ static int dtv_property_process_get(struct dvb_frontend *fe,
 	case DTV_ISDBT_LAYERC_TIME_INTERLEAVING:
 		tvp->u.data = fe->dtv_property_cache.layer[2].interleaving;
 		break;
-	case DTV_ISDBS_TS_ID:
-		tvp->u.data = fe->dtv_property_cache.isdbs_ts_id;
-		break;
-	case DTV_DVBT2_PLP_ID:
-		tvp->u.data = fe->dtv_property_cache.dvbt2_plp_id;
+
+	/* Multistream support */
+	case DTV_STREAM_ID:
+	case DTV_DVBT2_PLP_ID_LEGACY:
+		tvp->u.data = fe->dtv_property_cache.stream_id;
 		break;
 
 	/* ATSC-MH */
@@ -1712,11 +1714,11 @@ static int dtv_property_process_set(struct dvb_frontend *fe,
 	case DTV_ISDBT_LAYERC_TIME_INTERLEAVING:
 		fe->dtv_property_cache.layer[2].interleaving = tvp->u.data;
 		break;
-	case DTV_ISDBS_TS_ID:
-		fe->dtv_property_cache.isdbs_ts_id = tvp->u.data;
-		break;
-	case DTV_DVBT2_PLP_ID:
-		fe->dtv_property_cache.dvbt2_plp_id = tvp->u.data;
+
+	/* Multistream support */
+	case DTV_STREAM_ID:
+	case DTV_DVBT2_PLP_ID_LEGACY:
+		fe->dtv_property_cache.stream_id = tvp->u.data;
 		break;
 
 	/* ATSC-MH */
