@@ -918,7 +918,7 @@ void __init stx7108_configure_mmc(int emmc)
 
 static struct platform_device stx7108_sysconf_devices[] = {
 	{
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 0,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -939,7 +939,7 @@ static struct platform_device stx7108_sysconf_devices[] = {
 			},
 		}
 	}, {
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 1,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -960,7 +960,7 @@ static struct platform_device stx7108_sysconf_devices[] = {
 			},
 		}
 	}, {
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 2,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -981,7 +981,7 @@ static struct platform_device stx7108_sysconf_devices[] = {
 			},
 		}
 	}, {
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 3,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -1002,7 +1002,7 @@ static struct platform_device stx7108_sysconf_devices[] = {
 			},
 		}
 	}, {
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 4,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
