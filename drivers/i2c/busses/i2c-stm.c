@@ -354,7 +354,7 @@ static irqreturn_t iic_state_machine(int this_irq, void *data)
 			    SSC_CTL_PO | SSC_CTL_PH | SSC_CTL_HB | 0x8 |
 			    SSC_CTL_EN_RX_FIFO | SSC_CTL_EN_TX_FIFO);
 
-		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM);
+		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_I2CFSMODE);
 
 		/* NO break! */
 
@@ -412,7 +412,8 @@ be_fsm_start:
 		}
 
 		/* drive SDA... */
-		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_TXENB);
+		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_TXENB |
+				SSC_I2C_I2CFSMODE);
 		for (idx = 0; idx < txbuffcount; idx++)
 			ssc_store32(adap, SSC_TBUF, txbuff[idx]);
 		ssc_store32(adap, SSC_IEN, intflags);
@@ -430,7 +431,7 @@ be_fsm_start:
 				/* START! */
 				ssc_store32(adap, SSC_I2C,
 					    SSC_I2C_I2CM | SSC_I2C_TXENB |
-					    conflags);
+					    conflags | SSC_I2C_I2CFSMODE);
 			}
 		}
 
@@ -475,7 +476,8 @@ be_fsm_start:
 			jump_on_fsm_abort(trsc);
 		}
 
-		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_ACKG);
+		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_ACKG |
+				SSC_I2C_I2CFSMODE);
 
 		trsc->next_state = IIC_FSM_DATA_READ;
 
@@ -508,7 +510,8 @@ be_fsm_start:
 		if (trsc->idx_current_msg == (pmsg->len - 1)) {
 			/* last byte - disable ACKG */
 			dbg_print2(" Rx last byte\n");
-			ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM);
+			ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM |
+					SSC_I2C_I2CFSMODE);
 			ssc_store32(adap, SSC_IEN,
 				    SSC_IEN_NACKEN | SSC_IEN_ARBLEN);
 			ssc_store32(adap, SSC_TBUF, 0x1ff);
@@ -596,7 +599,8 @@ be_fsm_abort:
 		trsc->next_state = IIC_FSM_IDLE;
 
 		ssc_store32(adap, SSC_IEN, SSC_IEN_STOPEN | SSC_IEN_ARBLEN);
-		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_STOPG);
+		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_STOPG |
+				SSC_I2C_I2CFSMODE);
 		break;
 
 	case IIC_FSM_STOP:
@@ -611,7 +615,7 @@ be_fsm_stop:
 				trsc->next_state = IIC_FSM_NOREPSTART;
 				ssc_store32(adap, SSC_I2C,
 					    SSC_I2C_I2CM | SSC_I2C_TXENB |
-					    SSC_I2C_STOPG);
+					    SSC_I2C_STOPG | SSC_I2C_I2CFSMODE);
 				ssc_store32(adap, SSC_IEN,
 					    SSC_IEN_STOPEN | SSC_IEN_ARBLEN);
 			} else {
@@ -621,7 +625,8 @@ be_fsm_stop:
 				ssc_store32(adap, SSC_I2C,
 					    SSC_I2C_I2CM |
 					    SSC_I2C_TXENB |
-					    SSC_I2C_REPSTRTG);
+					    SSC_I2C_REPSTRTG |
+					    SSC_I2C_I2CFSMODE);
 				ssc_store32(adap, SSC_IEN,
 					    SSC_IEN_REPSTRTEN |
 					    SSC_IEN_ARBLEN);
@@ -641,7 +646,7 @@ be_fsm_stop:
 
 			ssc_store32(adap, SSC_I2C,
 				    SSC_I2C_I2CM | SSC_I2C_TXENB |
-				    SSC_I2C_STOPG);
+				    SSC_I2C_STOPG | SSC_I2C_I2CFSMODE);
 			ssc_store32(adap, SSC_IEN,
 				    SSC_IEN_STOPEN | SSC_IEN_ARBLEN);
 		}
@@ -657,7 +662,7 @@ be_fsm_stop:
 		dbg_print2("-Idle\n");
 		/* push the data line high */
 		ssc_store32(adap, SSC_TBUF, 0x1ff);
-		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM);
+		ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_I2CFSMODE);
 		ssc_store32(adap, SSC_CTL, SSC_CTL_EN |
 			    SSC_CTL_PO | SSC_CTL_PH | SSC_CTL_HB | 0x8);
 		/* No break here! */
@@ -954,7 +959,8 @@ iic_xfer_retry:
 					/* No - generate stop condition */
 					ssc_store32(adap, SSC_I2C,
 						    SSC_I2C_I2CM | SSC_I2C_STOPG
-						    | SSC_I2C_TXENB);
+						    | SSC_I2C_TXENB |
+						    SSC_I2C_I2CFSMODE);
 
 					local_irq_restore(flag);
 
@@ -1099,7 +1105,7 @@ static void iic_stm_setup_timing(struct iic_ssc *adap)
 	ssc_store32(adap, SSC_PRE_SCALER_BRG, iic_pre_scale_baudrate);
 
 	/* enable I2C mode */
-	ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM);
+	ssc_store32(adap, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_I2CFSMODE);
 
 	/* set other timings */
 	ssc_store32(adap, SSC_REP_START_HOLD, iic_rep_start_hold);
@@ -1328,7 +1334,7 @@ static int iic_stm_resume(struct device *dev)
 	/* enable RX, TX FIFOs - clear SR bit */
 	ssc_store32(i2c_bus, SSC_CTL, SSC_CTL_EN |
 		    SSC_CTL_PO | SSC_CTL_PH | SSC_CTL_HB | 0x8);
-	ssc_store32(i2c_bus, SSC_I2C, SSC_I2C_I2CM);
+	ssc_store32(i2c_bus, SSC_I2C, SSC_I2C_I2CM | SSC_I2C_I2CFSMODE);
 	iic_stm_setup_timing(i2c_bus);
 	return 0;
 }
