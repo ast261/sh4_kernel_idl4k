@@ -1375,7 +1375,7 @@ static int clkgenb_set_rate(clk_t *clk_p, unsigned long freq)
 
 	default:
 		/* Other clocks are assumed to be from Video Clock Controller */
-		div = clk_p->parent->rate / freq;
+		div = clk_p->parent->rate / freq  + (((freq/2) > (clk_p->parent->rate % freq))?0:1);
 		err = clkgenb_set_div(clk_p, &div);
 		break;
 	}
@@ -1982,7 +1982,7 @@ static int clkgenc_set_rate(clk_t *clk_p, unsigned long freq)
 	reg_value = CLK_READ(CKGC_BASE_ADDRESS + CKGC_FS0_CFG);
 	channel = (clk_p->id - CLKC_FS0_CH1) % 4;
 	reg_value |= set_rate_table[clk_p->id - CLKC_FS0_CH1];
-
+	reg_value |=1; /*LILLE FIX*/
 	/* Select FS clock only for the clock specified */
 	CLK_WRITE(CKGC_BASE_ADDRESS + CKGC_FS0_CFG, reg_value);
 

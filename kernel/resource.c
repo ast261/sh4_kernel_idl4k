@@ -719,9 +719,9 @@ void __release_region(struct resource *parent, resource_size_t start,
 
 	write_unlock(&resource_lock);
 
-	printk(KERN_WARNING "Trying to free nonexistent resource "
+/*	printk(KERN_WARNING "Trying to free nonexistent resource "
 		"<%016llx-%016llx>\n", (unsigned long long)start,
-		(unsigned long long)end);
+	(unsigned long long)end);*/
 }
 EXPORT_SYMBOL(__release_region);
 

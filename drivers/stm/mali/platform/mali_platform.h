@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -22,6 +22,10 @@
 #if !USING_MALI_PMM
 /* @brief System power up/down cores that can be passed into mali_platform_powerdown/up() */
 #define MALI_PLATFORM_SYSTEM  0
+#endif
+
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 /** @brief Platform specific setup and initialisation of MALI
@@ -89,4 +93,8 @@ void mali_gpu_utilization_handler(u32 utilization);
  */
 u32 pmu_get_power_up_down_info(void);
 #endif
+#endif
+
+#ifdef __cplusplus
+}
 #endif

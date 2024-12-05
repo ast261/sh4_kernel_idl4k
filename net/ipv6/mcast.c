@@ -322,6 +322,9 @@ nodev:
 	return NULL;
 }
 
+EXPORT_SYMBOL(ipv6_sock_mc_join);
+EXPORT_SYMBOL(ipv6_sock_mc_drop);
+
 void ipv6_sock_mc_close(struct sock *sk)
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -41,6 +41,8 @@ extern "C"
 	_mali_osk_lock_wait( pmm->lock, _MALI_OSK_LOCKMODE_RW )
 #define MALI_PMM_UNLOCK(pmm) \
 	_mali_osk_lock_signal( pmm->lock, _MALI_OSK_LOCKMODE_RW )
+#define MALI_PMM_LOCK_TERM(pmm) \
+        _mali_osk_lock_term( pmm->lock )
 
 /* Notification type for messages */
 #define MALI_PMM_NOTIFICATION_TYPE 0
@@ -54,7 +56,6 @@ typedef enum mali_pmm_status_tag
 	MALI_PMM_STATUS_POLICY_POWER_UP,            /**< Policy initiated power down */
         MALI_PMM_STATUS_OS_WAITING,                 /**< PMM is waiting for OS power up */
 	MALI_PMM_STATUS_OS_POWER_DOWN,              /**< OS initiated power down */ 
-	MALI_PMM_STATUS_RUNTIME_IDLE_IN_PROGRESS,
 	MALI_PMM_STATUS_DVFS_PAUSE,                 /**< PMM DVFS Status Pause */
 	MALI_PMM_STATUS_OS_POWER_UP,                /**< OS initiated power up */
 	MALI_PMM_STATUS_OFF,                        /**< PMM is not active */
@@ -93,8 +94,14 @@ typedef struct _mali_pmm_internal_state
 	u32 missed;                             /**< PMM missed events due to OOM */
 	mali_bool fatal_power_err;				/**< PMM has had a fatal power error? */
 	u32 is_dvfs_active;			/**< PMM DVFS activity */
+
+#if MALI_STATE_TRACKING
+	mali_pmm_status mali_last_pmm_status;  /**< The previous PMM status */
+	mali_pmm_event_id mali_new_event_status;/**< The type of the last PMM event */
+	mali_bool mali_pmm_lock_acquired;      /**< Is the PMM lock held somewhere or not */
+#endif
 	
-#if MALI_PMM_TRACE
+#if (MALI_PMM_TRACE || MALI_STATE_TRACKING)
 	u32 messages_sent;                      /**< Total event messages sent */
 	u32 messages_received;                  /**< Total event messages received */
 	u32 imessages_sent;                     /**< Total event internal messages sent */

@@ -453,6 +453,15 @@ config SH_ST_HDK7108
 	  Select SH_ST_HDK7108 if configuring for a
 	  STMicroelectronics STi7108 Reference Board.
 
+config SH_ST_B2037
+	bool "B2037: STi7108 SOC with Lille Ballout on HDK board"
+	depends on CPU_SUBTYPE_STX7108
+	select SYS_SUPPORTS_PCI
+	default n
+	help
+	  Select SH_ST_B2037 if configuring for a
+	  STMicroelectronics STi7108asLille_HDK Reference Board.
+
 config SH_ST_HDK7111
 	bool "HDK7111 : STx7111 HDK board"
 	depends on CPU_SUBTYPE_STX7111
@@ -461,6 +470,15 @@ config SH_ST_HDK7111
 	help
 	  Select STx7111 HDK if configuring for an
 	  STMicroelectronics STx7111 HDK Reference Board
+
+config SH_ST_IDL4K
+	bool "IDL4K: Inverto-IP-Switch Platform"
+	depends on CPU_SUBTYPE_STX7108
+	select SYS_SUPPORTS_PCI
+	default n
+	help
+	  Select SH_ST_IDL4K if configuring for a
+	  Inverto IP-Switch Board.
 
 config SH_ST_HDREF
 	bool "ST HDref board"

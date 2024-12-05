@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2010 ARM Limited. All rights reserved.
- * Copyright (C) 2011 STMicroelectronics R&D Limited. All rights reserved.
+ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -22,6 +21,9 @@
 #if defined USING_MALI400_L2_CACHE
 #include "mali_kernel_l2_cache.h"
 #endif
+#if USING_MALI_PMM
+#include "mali_pmm.h"
+#endif /* USING_MALI_PMM */
 
 /* platform specific set up */
 #include "mali_platform.h"
@@ -102,6 +104,9 @@ static struct mali_kernel_subsystem mali_subsystem_core =
 	mali_kernel_subsystem_core_session_begin,       /* session_begin */
     NULL,                                           /* session_end */
     NULL,                                           /* broadcast_notification */
+#if MALI_STATE_TRACKING
+	NULL,                                           /* dump_state */
+#endif
 };
 
 static struct mali_kernel_subsystem * subsystems[] =
@@ -564,29 +569,53 @@ _mali_osk_errcode_t _mali_ukk_wait_for_notification( _mali_uk_wait_for_notificat
 	if (NULL == queue)
 	{
 		MALI_DEBUG_PRINT(1, ("No notification queue registered with the session. Asking userspace to stop querying\n"));
-        args->code.type = _MALI_NOTIFICATION_CORE_SHUTDOWN_IN_PROGRESS;
+        args->type = _MALI_NOTIFICATION_CORE_SHUTDOWN_IN_PROGRESS;
 		MALI_SUCCESS;
 	}
 
     /* receive a notification, might sleep */
-	err = _mali_osk_notification_queue_receive(queue, args->code.timeout, &notification);
-	if (_MALI_OSK_ERR_TIMEOUT == err)
-	{
-		/* timeout */
-		args->code.type = _MALI_NOTIFICATION_CORE_TIMEOUT;
-        MALI_SUCCESS;
-	}
-    else if (_MALI_OSK_ERR_OK != err)
+	err = _mali_osk_notification_queue_receive(queue, &notification);
+	if (_MALI_OSK_ERR_OK != err)
 	{
         MALI_ERROR(err); /* errcode returned, pass on to caller */
     }
 
 	/* copy the buffer to the user */
-    args->code.type = (_mali_uk_notification_type)notification->notification_type;
+    args->type = (_mali_uk_notification_type)notification->notification_type;
     _mali_osk_memcpy(&args->data, notification->result_buffer, notification->result_buffer_size);
 
 	/* finished with the notification */
 	_mali_osk_notification_delete( notification );
+
+    MALI_SUCCESS; /* all ok */
+}
+
+_mali_osk_errcode_t _mali_ukk_post_notification( _mali_uk_post_notification_s *args )
+{
+	_mali_osk_notification_t * notification;
+    _mali_osk_notification_queue_t *queue;
+
+    /* check input */
+	MALI_DEBUG_ASSERT_POINTER(args);
+    MALI_CHECK_NON_NULL(args->ctx, _MALI_OSK_ERR_INVALID_ARGS);
+
+    queue = (_mali_osk_notification_queue_t *)mali_kernel_session_manager_slot_get(args->ctx, mali_subsystem_core_id);
+
+	/* if the queue does not exist we're currently shutting down */
+	if (NULL == queue)
+	{
+		MALI_DEBUG_PRINT(1, ("No notification queue registered with the session. Asking userspace to stop querying\n"));
+		MALI_SUCCESS;
+	}
+
+	notification = _mali_osk_notification_create(args->type, 0);
+	if ( NULL == notification)
+	{
+		MALI_PRINT_ERROR( ("Failed to create notification object\n")) ;
+		return _MALI_OSK_ERR_NOMEM;
+	}
+
+	_mali_osk_notification_queue_send(queue, notification);
 
     MALI_SUCCESS; /* all ok */
 }
@@ -874,4 +903,29 @@ _mali_osk_errcode_t mali_core_signal_power_down( mali_pmm_core_id core, mali_boo
 	MALI_SUCCESS;
 }
 
+#endif
+
+
+#if MALI_STATE_TRACKING
+u32 _mali_kernel_core_dump_state(char* buf, u32 size)
+{
+	int i, n;
+	char *original_buf = buf;
+	for (i = 0; i < SUBSYSTEMS_COUNT; ++i)
+	{
+		if (NULL != subsystems[i]->dump_state)
+		{
+			n = subsystems[i]->dump_state(buf, size);
+			size -= n;
+			buf += n;
+		}
+	}
+#if USING_MALI_PMM
+	n = mali_pmm_dump_os_thread_state(buf, size);
+	size -= n;
+	buf += n;
+#endif
+	/* Return number of bytes written to buf */
+	return (u32)(buf - original_buf);
+}
 #endif

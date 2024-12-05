@@ -583,6 +583,13 @@ config HW_GLITCH_WIDTH
         int "Glitch suppression width in uS"
         default "1"
 
+config I2C_STM_NOSTOP_API
+        bool "Add the NoStop I2C operation API"
+        depends on I2C_ST40_PIO || I2C_STM
+        default n
+        ---help---
+          Enable this option to use the NoStop operation API
+
 config I2C_STU300
 	tristate "ST Microelectronics DDC I2C interface"
 	depends on MACH_U300

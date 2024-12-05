@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -137,7 +137,6 @@ typedef enum mali_pmm_policy_tag
 	MALI_PMM_POLICY_RUNTIME_JOB_CONTROL = 3     /**< Run time power management control policy */
 } mali_pmm_policy;
 
-
 /** @brief Function to report to the OS when the power down has finished
  *
  * @param data The event message data that initiated the power down
@@ -164,6 +163,18 @@ void _mali_osk_pmm_dvfs_operation_done(mali_pmm_message_data data);
 void _mali_osk_pmm_policy_events_notifications(mali_pmm_event_id event_id);
 
 #endif
+
+/** @brief Function to power up MALI 
+ *
+ *  @note powers up the MALI during MALI device driver is unloaded
+ */
+void malipmm_force_powerup( void );
+
+/** @brief Function to power down MALI
+ *
+ *  @note powers down the MALI during MALI device driver is unloaded 
+ */
+void malipmm_force_powerdown( void );
 
 /** @brief Function to report the OS that device is idle
  *
@@ -303,11 +314,11 @@ void _mali_pmm_trace_event_message( mali_pmm_message_t *event, mali_bool receive
 
 #endif /* MALI_PMM_TRACE */
 
-#ifdef DEBUG
-/** @brief Dumps the current state of the PMM
+/** @brief Dumps the current state of OS PMM thread
  */
-void malipmm_state_dump(void);
-#endif
+#if MALI_STATE_TRACKING
+u32 mali_pmm_dump_os_thread_state( char *buf, u32 size );
+#endif /* MALI_STATE_TRACKING */
 
 /** @} */ /* end group pmmapi */
 

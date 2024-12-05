@@ -21,6 +21,7 @@
 #define RTL821x_INER		0x12
 #define RTL821x_INER_INIT	0x6400
 #define RTL821x_INSR		0x13
+#define RTL821x_PHYCR   0x10
 
 MODULE_DESCRIPTION("Realtek PHY driver");
 MODULE_AUTHOR("Johnson Leung");
@@ -48,15 +49,43 @@ static int rtl821x_config_intr(struct phy_device *phydev)
 	return err;
 }
 
+int rtl821x_read_status(struct phy_device *phydev)
+{
+  int result = genphy_read_status(phydev);
+  if (!result)
+  {
+    int value;
+
+    value = phy_read(phydev, RTL821x_PHYCR);
+
+    if (phydev->speed == SPEED_1000)
+    {
+      if (value&(1<<4))
+      {
+        // switch on the clock
+        value &= ~(1<<4);
+        phy_write(phydev, RTL821x_PHYCR, value);
+      }
+    }
+    else if ((value&(1<<4)) == 0)
+    {
+      // switch on the clock
+      value |= (1<<4);
+      phy_write(phydev, RTL821x_PHYCR, value);
+    }
+  }
+  return result;
+}
+
 /* RTL8211B */
 static struct phy_driver rtl821x_driver = {
-	.phy_id		= 0x001cc912,
+	.phy_id		= 0x001cc910,
 	.name		= "RTL821x Gigabit Ethernet",
-	.phy_id_mask	= 0x001fffff,
+	.phy_id_mask	= 0x001ffff0,
 	.features	= PHY_GBIT_FEATURES,
 	.flags		= PHY_HAS_INTERRUPT,
 	.config_aneg	= &genphy_config_aneg,
-	.read_status	= &genphy_read_status,
+	.read_status	= &rtl821x_read_status,
 	.ack_interrupt	= &rtl821x_ack_interrupt,
 	.config_intr	= &rtl821x_config_intr,
 	.driver		= { .owner = THIS_MODULE,},

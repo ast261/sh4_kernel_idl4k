@@ -261,7 +261,7 @@ static struct spi_board_info hdk7105_serial_flash = {
 };
 
 static struct platform_device *hdk7105_devices[] __initdata = {
-	&hdk7105_leds,
+/*	&hdk7105_leds,*/
 	&hdk7105_front_panel,
 	&hdk7105_nor_flash,
 };
@@ -353,10 +353,15 @@ static int __init hdk7105_device_init(void)
 			.routing.ssc0.sclk = stx7105_ssc0_sclk_pio2_2,
 			.routing.ssc0.mtsr = stx7105_ssc0_mtsr_pio2_3, });
 	/* SPI - SerialFLASH */
-	stx7105_configure_ssc_spi(1, &(struct stx7105_ssc_config) {
+	/*stx7105_configure_ssc_spi(1, &(struct stx7105_ssc_config) {
 			.routing.ssc1.sclk = stx7105_ssc1_sclk_pio2_5,
 			.routing.ssc1.mtsr = stx7105_ssc1_mtsr_pio2_6,
-			.routing.ssc1.mrst = stx7105_ssc1_mrst_pio2_7});
+			.routing.ssc1.mrst = stx7105_ssc1_mrst_pio2_7});*/
+
+        stx7105_configure_ssc_i2c(1, &(struct stx7105_ssc_config) {
+                        .routing.ssc2.sclk = stx7105_ssc1_sclk_pio2_5,
+                        .routing.ssc2.mtsr = stx7105_ssc1_mtsr_pio2_6, });
+
 	/* I2C_xxxC - JN1 (NIM), JN3, UT1 (CI chip), US2 (EEPROM) */
 	stx7105_configure_ssc_i2c(2, &(struct stx7105_ssc_config) {
 			.routing.ssc2.sclk = stx7105_ssc2_sclk_pio3_4,

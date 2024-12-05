@@ -906,37 +906,46 @@ int pms_global_standby(enum pms_standby_e state)
 }
 EXPORT_SYMBOL(pms_global_standby);
 
-#ifdef CONFIG_RTC_CLASS
+#ifndef CONFIG_STM_LPC
 #include <linux/rtc.h>
-int pms_set_wakeup_timers(unsigned long long second)
-{
-	static struct rtc_device *dev;
-	unsigned long secs_wake = 0;
-	struct rtc_wkalrm wake_time;
-
-
-	if (!dev)
-		dev = rtc_class_open(CONFIG_RTC_HCTOSYS_DEVICE);
-
-	pr_info("%s - %d on %s\n", __func__, (int)second, dev_name(&dev->dev));
-	if (!second) {
-		wake_time.enabled = 0;
-		rtc_tm_to_time(&wake_time.time, &secs_wake);
-		return 0;
-	}
-	rtc_read_time(dev, &wake_time.time);
-	rtc_tm_to_time(&wake_time.time, &secs_wake);
-	secs_wake += second;
-
-	rtc_time_to_tm(secs_wake, &wake_time.time);
-
-	wake_time.enabled = 1;
-	rtc_set_alarm(dev, &wake_time);
-
-	return 0;
-}
-EXPORT_SYMBOL(pms_set_wakeup_timers);
 #endif
+ int stm_lpc_set(int enable, unsigned long long tick);
+
+ int pms_set_wakeup_timers(unsigned long long second)
+ {
+#ifdef CONFIG_STM_LPC
+        return stm_lpc_set(1, second);
+#else
+       static struct rtc_device *dev;
+       unsigned long secs_wake = 0;
+       struct rtc_wkalrm wake_time;
+
+
+       if (!dev)
+               dev = rtc_class_open(CONFIG_RTC_HCTOSYS_DEVICE);
+
+       pr_info("%s - %d on %s\n", __func__, (int)second, dev_name(&dev->dev));
+       if (!second) {
+               wake_time.enabled = 0;
+               rtc_tm_to_time(&wake_time.time, &secs_wake);
+               return 0;
+       }
+       rtc_read_time(dev, &wake_time.time);
+       rtc_tm_to_time(&wake_time.time, &secs_wake);
+       secs_wake += second;
+
+       rtc_time_to_tm(secs_wake, &wake_time.time);
+
+       wake_time.enabled = 1;
+       rtc_set_alarm(dev, &wake_time);
+
+       return 0;
+#endif
+ }
+ EXPORT_SYMBOL(pms_set_wakeup_timers);
+
+
+
 
 enum {
 	cmd_add_clk_constr,
@@ -1157,7 +1166,7 @@ static ssize_t pms_current_store(struct kobject *kobj,
 static struct kobj_attribute pms_current_attr = (struct kobj_attribute)
 __ATTR(current_state, S_IRUSR | S_IWUSR, pms_current_show, pms_current_store);
 
-#ifdef CONFIG_RTC_CLASS
+#ifdef CONFIG_STM_LPC
 static ssize_t pms_timeout_store(struct kobject *kobj,
 	struct kobj_attribute *attr, const char *buf, size_t count)
 {
@@ -1205,7 +1214,7 @@ static struct attribute *pms_attrs[] = {
 	&pms_current_attr.attr,
 	&pms_control_attr.attr,
 	&pms_objects_attr.attr,
-#ifdef CONFIG_RTC_CLASS
+#ifdef CONFIG_STM_LPC
 	&pms_timeout_attr.attr,
 #endif
 	NULL

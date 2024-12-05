@@ -1,10 +1,10 @@
 /*
- * Copyright (C) 2010 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
  * Copyright (C) 2011 STMicroelectronics R&D Limited. All rights reserved.
- *
+ * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
- *
+ * 
  * A copy of the licence is included with the program, and can also be obtained from Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
@@ -464,7 +464,10 @@ struct mali_kernel_subsystem mali_subsystem_memory =
 	mali_memory_core_system_info_fill,  /* system_info_fill */
 	mali_memory_core_session_begin,     /* session_begin */
 	mali_memory_core_session_end,       /* session_end */
-	NULL                                /* broadcast_notification */
+	NULL,                               /* broadcast_notification */
+#if MALI_STATE_TRACKING
+	NULL,                               /* dump_state */
+#endif
 };
 
 static mali_kernel_mem_address_manager mali_address_manager =
@@ -542,6 +545,7 @@ static void mali_memory_core_terminate(mali_kernel_subsystem_identifier id)
 		/* release resources */
 		_mali_osk_mem_unmapioregion(mmu->base, mmu->mapping_size, mmu->mapped_registers);
 		_mali_osk_mem_unreqregion(mmu->base, mmu->mapping_size);
+		_mali_osk_lock_term(mmu->lock);
 		_mali_osk_free(mmu);
 	}
 
@@ -1250,14 +1254,12 @@ static void mali_kernel_mmu_bus_reset(mali_kernel_memory_mmu * mmu)
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_DTE_ADDR, mali_empty_page_directory); /* no session is active, so just activate the empty page directory */
 	mali_mmu_register_write(mmu, MALI_MMU_REGISTER_COMMAND, MALI_MMU_COMMAND_ENABLE_PAGING);
 
-	/* resume normal operation */
-	_mali_kernel_core_broadcast_subsystem_message(MMU_KILL_STEP3_CONTINUE_JOB_HANDLING, (u32)mmu);
-
-	MALI_DEBUG_PRINT(4, ("Page fault handling complete\n"));
-
 	/* release the extra address space reference, will schedule */
 	mali_memory_core_mmu_release_address_space_reference(mmu);
 
+	/* resume normal operation */
+	_mali_kernel_core_broadcast_subsystem_message(MMU_KILL_STEP3_CONTINUE_JOB_HANDLING, (u32)mmu);
+	MALI_DEBUG_PRINT(4, ("Page fault handling complete\n"));
 }
 
 void mali_kernel_mmu_reset(void * input_mmu)
@@ -1872,6 +1874,8 @@ void mali_mmu_page_table_cache_destroy(void)
 		_mali_osk_free(alloc->usage_map);
 		_mali_osk_free(alloc);
 	}
+
+	_mali_osk_lock_term(page_table_cache.lock);
 }
 
 _mali_osk_errcode_t mali_mmu_get_table_page(u32 *table_page, mali_io_address *mapping)

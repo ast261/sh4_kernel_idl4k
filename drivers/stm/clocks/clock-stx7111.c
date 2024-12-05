@@ -1071,7 +1071,7 @@ static int clkgenb_set_rate(clk_t *clk_p, unsigned long freq)
 		/* clkgenb_set_fsclock() is updating clk_p->rate */
 		return clkgenb_set_fsclock(clk_p, freq);
 
-	div = clk_p->parent->rate / freq;
+	div = clk_p->parent->rate / freq + (((freq/2) > (clk_p->parent->rate % freq))?0:1);
 	err = clkgenb_set_div(clk_p, &div);
 	if (!err)
 		clk_p->rate = freq;

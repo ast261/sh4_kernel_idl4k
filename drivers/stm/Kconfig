@@ -181,6 +181,21 @@ config STM_MALI_DEBUG
 	---help---
 	  Enable this option to enable debug trace messages on the console
 
+config STM_LPC
+	bool "Low power control"
+	depends on PM
+	default n
+	---help---
+	  This option adds support for the hardware Low Power Control
+	  tu support the wakeup_on_timeout in the suspend operation.
+
+config STM_LPC_DEBUG
+	depends on STM_LPC
+	bool "LPC debug"
+	default n
+	---help---
+	  Enable this option to print out information about the LPC
+
 config PMS
 	bool "Power Management Scheme"
 	default n
@@ -212,5 +227,26 @@ config PMS_DEBUG
 	depends on PMS
 	help
 	  Enable this option to print out information about the PMS
+
+config STM_LPM
+	bool "STM Low Power Monitor"
+	depends on STM_DRIVERS
+	default n
+	---help---
+	  This option adds support for the hardware low power monitor.
+
+config STM_LPM_RD_MONITOR
+	bool "STM Low Power Monitor power key press on GPIO"
+	depends on STM_LPM
+	default n
+	---help---
+	  This enable intercept of GPIO activity by STLPM_POWER
+
+config STM_LPM_DEBUG
+	bool "STM Low Power Monitor debug"
+	depends on STM_LPM
+	default n
+	---help---
+	  Enable this option to print out information about the LPM
 
 endmenu

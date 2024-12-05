@@ -30,6 +30,7 @@
 #include "reg_pio.h"
 
 
+#define CONFIG_STPIO
 
 struct stpio_pin {
 #ifdef CONFIG_STPIO
@@ -225,9 +226,7 @@ static void stm_gpio_irq_chip_disable(unsigned int pin_irq)
 	unsigned gpio = irq_to_gpio(pin_irq);
 	int port_no = stm_gpio_port(gpio);
 	int pin_no = stm_gpio_pin(gpio);
-
 	pr_debug("disabling pin %d\n", pin_no);
-
 	set__PIO_CLR_PMASK__CLR_PMASK__CLEAR(stm_gpio_bases[port_no], pin_no);
 }
 
@@ -299,6 +298,8 @@ static struct irq_chip stm_gpio_irq_chip = {
 	.mask		= stm_gpio_irq_chip_disable,
 	.mask_ack	= stm_gpio_irq_chip_disable,
 	.unmask		= stm_gpio_irq_chip_enable,
+        /* STSDK: Need this for STPIO */
+	.enable		= stm_gpio_irq_chip_enable,
 	.set_type	= stm_gpio_irq_chip_type,
 	.set_wake	= stm_gpio_irq_chip_wake,
 };

@@ -1097,7 +1097,7 @@ static int clkgenb_set_rate(clk_t *clk_p, unsigned long freq)
 		/* clkgenb_set_fsclock() is updating clk_p->rate */
 		return clkgenb_set_fsclock(clk_p, freq);
 
-	div = clk_p->parent->rate / freq;
+	div = clk_p->parent->rate / freq  + (((freq/2) > (clk_p->parent->rate % freq))?0:1);
 	err = clkgenb_set_div(clk_p, &div);
 	if (!err)
 		clk_p->rate = freq;
@@ -1550,8 +1550,8 @@ static int clkgenb_identify_parent(clk_t *clk_p)
 {
 	unsigned long sel, fs_sel;
 	unsigned long displaycfg;
-	const clk_t *fs_clock[2] = { &clk_clocks[CLKB_FS1_CH1],
-				     &clk_clocks[CLKB_FS0_CH1] };
+	const clk_t *fs_clock[2] = { &clk_clocks[CLKB_FS0_CH1],
+				     &clk_clocks[CLKB_FS1_CH1] };
 	const clk_t *dvp_fs_clock[4] = {
 		&clk_clocks[CLKB_PIX_FROM_DVP], &clk_clocks[CLKB_PIX_FROM_DVP],
 		&clk_clocks[CLKB_FS0_CH1], &clk_clocks[CLKB_FS1_CH1]

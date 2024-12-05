@@ -384,8 +384,8 @@ static struct stm_mali_resource hdk7108_mali_mem[1] = {
 static struct stm_mali_resource hdk7108_mali_ext_mem[] = {
 	{
 		.name 	= "EXTERNAL_MEMORY_RANGE",
-		.start 	=  0x40000000,
-		.end	=  0x4FFFFFFF,
+		.start 	=  CONFIG_MEMORY_START,
+		.end	=  CONFIG_MEMORY_START + CONFIG_MEMORY_SIZE - 1,
 	}
 };
 

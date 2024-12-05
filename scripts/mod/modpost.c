@@ -1573,8 +1573,12 @@ static int add_versions(struct buffer *b, struct module *mod)
 		if (!exp || exp->module == mod) {
 			if (have_vmlinux && !s->weak) {
 				if (warn_unresolved) {
+/* STFAE - START - Don't want warnings all the time ! */
+#if 0
 					warn("\"%s\" [%s.ko] undefined!\n",
 					     s->name, mod->name);
+#endif
+/* STFAE - STOP  - Don't want warnings all the time ! */
 				} else {
 					merror("\"%s\" [%s.ko] undefined!\n",
 					          s->name, mod->name);

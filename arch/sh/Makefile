@@ -165,6 +165,7 @@ machdir-$(CONFIG_SH_ST_HDKH246)			+= mach-hdkh246
 machdir-$(CONFIG_SH_ST_HDKH251)			+= mach-hdkh251
 machdir-$(CONFIG_SH_ST_HDK7106)			+= mach-hdk7106
 machdir-$(CONFIG_SH_ST_HDK7108)			+= mach-hdk7108
+machdir-$(CONFIG_SH_ST_B2037)			+= mach-b2037
 machdir-$(CONFIG_SH_ST_HDK7111)			+= mach-hdk7111
 machdir-$(CONFIG_SH_ST_HDK7197)			+= mach-hdk7197
 machdir-$(CONFIG_SH_ST_HDREF)			+= mach-hdref
@@ -190,6 +191,7 @@ machdir-$(CONFIG_SH_ST_7102ISDB)		+= mach-7102isdb
 machdir-$(CONFIG_SH_ST_MB837)			+= mach-mb837 mach-st
 machdir-$(CONFIG_SH_ST_MB839)			+= mach-mb839
 machdir-$(CONFIG_SH_ST_MB903)			+= mach-mb903
+machdir-$(CONFIG_SH_ST_IDL4K)			+= mach-idl4k
 
 ifneq ($(machdir-y),)
 core-y	+= $(addprefix arch/sh/boards/, \

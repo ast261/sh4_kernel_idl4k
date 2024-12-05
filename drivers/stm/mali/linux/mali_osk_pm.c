@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2010 ARM Limited. All rights reserved.
+ * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -118,12 +118,10 @@ void _mali_osk_pmm_power_down_done(mali_pmm_message_data data)
 #ifdef CONFIG_PM
 	is_wake_up_needed = 1;
 #if MALI_POWER_MGMT_TEST_SUITE
-#if MALI_PMM_INTERNAL_TESTING
 	if (is_mali_pmu_present == 0)
 	{
 		pwr_mgmt_status_reg = _mali_pmm_cores_list();
 	}
-#endif /* MALI_PMM_INTERNAL_TESTING */
 #endif /* MALI_POWER_MGMT_TEST_SUITE */
 	wake_up_process(pm_thread);
 	MALI_DEBUG_PRINT(4, ("OSPMM: MALI Power down Done\n" ));

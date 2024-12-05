@@ -568,8 +568,11 @@ static int bit_xfer(struct i2c_adapter *i2c_adap,
 	ret = i;
 
 bailout:
+       if (!((pmsg->flags & I2C_M_NOSTOP) && ret>=0))
+        {
 	bit_dbg(3, &i2c_adap->dev, "emitting stop condition\n");
 	i2c_stop(adap);
+        }
 	return ret;
 }
 

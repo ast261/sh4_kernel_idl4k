@@ -2790,7 +2790,11 @@ static struct nand_flash_dev *nand_get_flash_type(struct mtd_info *mtd,
 			if (!(id4 == *maf_id && id5 == dev_id))
 				/* ECC level in id4[1:0] */
 				if ((id4 & 0x3) == 0x2)
+                {
+#ifndef CONFIG_SH_ST_IDL4K
 					chip->ecc.mode = NAND_ECC_4BITONDIE;
+#endif
+                }
 		}
 	} else {
 		/*

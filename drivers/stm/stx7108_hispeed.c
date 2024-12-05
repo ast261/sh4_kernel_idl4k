@@ -33,6 +33,21 @@
 /* Turn-on to only debug retiming setting for example on eth driver */
 /*#define DEBUG_RETIME_CONF*/
 
+#define ETH_MDIO_BIDIR(_gmac, _port, _pin, _retiming) \
+	{ \
+		.gpio = stm_gpio(_port, _pin), \
+		.direction = stm_pad_gpio_direction_custom, \
+		.function = 1 + _gmac, \
+		.priv = &(struct stx7108_pio_config) {	\
+			.retime = &_retiming, \
+			.mode = &(struct stx7108_pio_mode_config) { \
+				.oe = 0, \
+				.pu = 1, \
+				.od = 0, \
+			}, \
+		}, \
+	}
+
 static void stx7108_pio_dump_pad_config(const char *name, int port,
 					struct stm_pad_config *pad_config)
 {
@@ -501,22 +516,88 @@ static struct stm_pad_config stx7108_ethernet_rgmii_pad_configs[] = {
 		},
 	},
 };
+#define RMII_PHY_CLOCK(_gmac, _port, _pin, _retiming) \
+	{ \
+		.gpio = stm_gpio(_port, _pin), \
+		.direction = stm_pad_gpio_direction_in, \
+		.function = 2, \
+		.name = "PHYCLK", \
+		.priv = &(struct stx7108_pio_config) { \
+			.retime = &_retiming, \
+		}, \
+	}
+
+static struct stx7108_pio_retime_config rmii_txd_retime_bypass = {
+	.retime = 1,
+	.clk1notclk0 = 1,
+	.clknotdata = 0,
+	.double_edge = 0,
+	.invertclk = 0,
+	.delay_input = 0,
+};
+
+static struct stx7108_pio_retime_config rmii_mdio_retime_bypass = {
+	.retime = 0,
+	.clk1notclk0 = -1,
+	.clknotdata = 0,
+	.double_edge = -1,
+	.invertclk = -1,
+	.delay_input = 3,
+};
+static struct stx7108_pio_retime_config rmii_mdc_retime_bypass = {
+	.retime = 1,
+	.clk1notclk0 = 0,
+	.clknotdata = 1,
+	.double_edge = -1,
+	.invertclk = 0,
+	.delay_input = 0,
+};
+
+static struct stx7108_pio_retime_config rmii_mdint_retime_bypass = {
+	.retime = 0,
+	.clk1notclk0 = -1,
+	.clknotdata = 0,
+	.double_edge = -1,
+	.invertclk = -1,
+	.delay_input = 0,
+};
+
+static struct stx7108_pio_retime_config rmii_rxd_retime_bypass = {
+	.retime = 1,
+	.clk1notclk0 = 1,
+	.clknotdata = 0,
+	.double_edge = 0,
+	.invertclk = 0,
+	.delay_input = 2,
+};
+
+static struct stx7108_pio_retime_config rmii_retime_phy_clock = {
+	.retime = 1,
+	.clk1notclk0 = 0,
+	.clknotdata = 1,
+	.double_edge = -1,
+	.invertclk = 0,
+	.delay_input = 0,
+};
+
+
 static struct stm_pad_config stx7108_ethernet_rmii_pad_configs[] = {
 	[0] = {
 		.gpios_num = 12,
 		.gpios = (struct stm_pad_gpio []) {
-			BYPASS_OUT(0, 6, 0, mii_retime_bypass),	/* TXD[0] */
-			BYPASS_OUT(0, 6, 1, mii_retime_bypass),	/* TXD[1] */
-			BYPASS_OUT(0, 7, 0, mii_retime_bypass),	/* TXER */
-			BYPASS_OUT(0, 7, 1, mii_retime_bypass),	/* TXEN */
-			BYPASS_OUT(0, 7, 4, mii_retime_bypass),	/* MDIO */
-			BYPASS_OUT(0, 7, 5, mii_retime_bypass),	/* MDC */
-			BYPASS_IN(0, 7, 7, mii_retime_bypass),	/* MDINT */
-			BYPASS_IN(0, 8, 0, mii_retime_bypass),	/* RXD.0 */
-			BYPASS_IN(0, 8, 1, mii_retime_bypass),	/* RXD.1 */
-			BYPASS_IN(0, 9, 0, mii_retime_bypass),	/* RXDV */
-			BYPASS_IN(0, 9, 1, mii_retime_bypass),	/* RX_ER */
-			PHY_CLOCK(0, 9, 3, mii_retime_phy_clock),/* PHYCLK */
+			BYPASS_OUT(0, 6, 0, rmii_txd_retime_bypass),/* TXD[0] */
+			BYPASS_OUT(0, 6, 1, rmii_txd_retime_bypass),/* TXD[1] */
+			BYPASS_OUT(0, 7, 0, rmii_txd_retime_bypass),/* TXER */
+			BYPASS_OUT(0, 7, 1, rmii_txd_retime_bypass),/* TXEN */
+			BYPASS_IN(0, 7, 7, rmii_mdint_retime_bypass),/* MDINT */
+			/* MDIO with internal pull-up */
+			ETH_MDIO_BIDIR(0, 7, 4, rmii_mdio_retime_bypass),
+			BYPASS_OUT(0, 7, 5, rmii_mdc_retime_bypass),/* MDC */
+			BYPASS_IN(0, 8, 0, rmii_rxd_retime_bypass),/* RXD.0 */
+			BYPASS_IN(0, 8, 1, rmii_rxd_retime_bypass),/* RXD.1 */
+			BYPASS_IN(0, 9, 0, rmii_rxd_retime_bypass),/* RXDV */
+			BYPASS_IN(0, 9, 1, rmii_rxd_retime_bypass),/* RX_ER */
+			PHY_CLOCK(0, 9, 3, rmii_retime_phy_clock),/* PHYCLK */
 		},
 		.sysconfs_num = 3,
 		.sysconfs = (struct stm_pad_sysconf []) {

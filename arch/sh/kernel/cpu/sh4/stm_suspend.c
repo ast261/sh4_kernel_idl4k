@@ -61,8 +61,8 @@ static int stm_suspend_enter(suspend_state_t state)
 	int err = 0;
 
 	/* Must wait for serial buffers to clear */
-	printk(KERN_INFO "CPU is sleeping\n");
-	mdelay(100);
+	/*printk(KERN_INFO "CPU is sleeping\n");*/
+	mdelay(2000);
 
 	flush_cache_all();
 
