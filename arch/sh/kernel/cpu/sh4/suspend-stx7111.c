@@ -236,8 +236,8 @@ on_suspending:
 		unsigned long pll_id;
 
 		/* identify the eth_phy_clk */
-		pll_id = (ca_eth_phy_clk->parent == ca_pll1_clk) ? 2 : 1;
-
+		pll_id = (clk_get_parent(ca_eth_phy_clk) == ca_pll1_clk) ?
+				2 : 1;
 		pwr &= ~pll_id;
 		cfg_0 &= ~(0x3 << (2 * CLKA_ETH_PHY_ID));
 		cfg_0 |= (pll_id<< (2 * CLKA_ETH_PHY_ID));

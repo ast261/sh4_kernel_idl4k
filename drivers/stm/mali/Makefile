@@ -8,10 +8,10 @@
 MALI_DIR := $(srctree)/drivers/stm/mali
 
 # Get ARM release version string
-SVN_REV := $(shell [ -e $(MALI_DIR)/version ] && cat $(MALI_DIR)/version)
+SVN_REV:=$(shell [ -e $(MALI_DIR)/version ] && cat $(MALI_DIR)/version)
 
 # Get API version of user-kernel interface by extracting it from the mali_kernel_ioctl.h file
-API_VERSION := $(shell grep "\#define _MALI_API_VERSION" $(MALI_DIR)/common/mali_uk_types.h | cut -d' ' -f 3 )
+API_VERSION:=$(shell grep "\#define _MALI_API_VERSION" $(MALI_DIR)/common/mali_uk_types.h | cut -d' ' -f 3 )
 
 # Driver include paths
 ccflags-y := -I$(MALI_DIR) -I$(MALI_DIR)/common -I$(MALI_DIR)/linux -I$(MALI_DIR)/platform 
@@ -49,11 +49,21 @@ COMMON_OBJS := $(addprefix ./common/, \
         mali_kernel_descriptor_mapping.o \
         mali_kernel_vsync.o )
 
-PLATFORM_OBJS := $(addprefix ./platform/stm/, \
+PLATFORM_OBJS := $(addprefix ./platform/default/, \
         mali_platform.o )
 
-ifeq ($(CONFIG_CPU_SUBTYPE_STX7108)$(CONFIG_CPU_SUBTYPE_FLI7510),y)
+ifeq ($(CONFIG_CPU_SUBTYPE_STIH415)$(CONFIG_CPU_SUBTYPE_STX7108)$(CONFIG_CPU_SUBTYPE_FLI7510),y)
+
+ifeq ($(CONFIG_CPU_SUBTYPE_STIH415),y)
+SOC                      := stih415
+endif
+ifeq ($(CONFIG_CPU_SUBTYPE_STX7108),y)
 SOC                      := stx7108
+endif
+ifeq ($(CONFIG_CPU_SUBTYPE_FLI7510),y)
+SOC                      := fli75x0
+endif
+
 USING_MMU                := 1
 USING_UMP                := 0
 USING_MALI200            := 0
@@ -65,7 +75,7 @@ USING_GP2                := 1
 ONLY_ZBT                 := 0
 USING_ZBT                := 1
 USING_OS_MEMORY          := 0
-USING_PMM                := 1
+USING_PMM                := 0
 USING_MALI_RUN_TIME_PM 	 := 0
 USING_GPU_UTILIZATION  	 := 0
 USING_PROFILING        	 := 0

@@ -1102,7 +1102,7 @@ typedef u32 mali_pmm_message_data;
 
 /** @brief Arguments to _mali_ukk_pmm_event_message()
  */
-typedef struct 
+typedef struct
 {
 	void *ctx;                          /**< [in,out] user-kernel context (trashed on output) */
 	u32 id;                             /**< [in] event id */

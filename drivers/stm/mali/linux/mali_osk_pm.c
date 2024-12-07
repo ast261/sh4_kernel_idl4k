@@ -33,11 +33,13 @@
 #include "mali_linux_pm.h"
 #include "mali_linux_pm_testsuite.h"
 
+#if MALI_LICENSE_IS_GPL
 #if MALI_PMM_RUNTIME_JOB_CONTROL_ON
 #ifdef CONFIG_PM_RUNTIME
 static int is_runtime =0;
 #endif /* CONFIG_PM_RUNTIME */
 #endif /* MALI_PMM_RUNTIME_JOB_CONTROL_ON */
+#endif /* MALI_LICENSE_IS_GPL */
 
 #if MALI_POWER_MGMT_TEST_SUITE
 
@@ -177,6 +179,20 @@ void _mali_osk_pmm_dev_activate(void)
         }
 #endif /* MALI_PMM_RUNTIME_JOB_CONTROL_ON */
 #endif /* CONFIG_PM_RUNTIME */
+#endif /* MALI_LICENSE_IS_GPL */
+}
+
+void _mali_osk_pmm_ospmm_cleanup( void )
+{
+#if MALI_LICENSE_IS_GPL
+#ifdef CONFIG_PM
+	int thread_state;
+	thread_state = mali_get_ospmm_thread_state();
+	if (thread_state)
+	{
+		_mali_osk_pmm_dvfs_operation_done(0);
+	}
+#endif /* CONFIG_PM */
 #endif /* MALI_LICENSE_IS_GPL */
 }
 

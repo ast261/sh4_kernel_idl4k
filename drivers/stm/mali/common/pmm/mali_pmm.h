@@ -188,6 +188,12 @@ _mali_osk_errcode_t _mali_osk_pmm_dev_idle( void );
  */
 void _mali_osk_pmm_dev_activate( void );
 
+/** @brief Function to report OS PMM for cleanup
+ *
+ * @note Function to report OS PMM for cleanup
+ */
+void _mali_osk_pmm_ospmm_cleanup( void );
+
 /** @brief Queries the current state of the PMM software
  *
  * @note the state of the PMM can change after this call has returned

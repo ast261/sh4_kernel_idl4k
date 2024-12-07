@@ -18,15 +18,14 @@
 #include <linux/stm/platform.h>
 #include <linux/ioport.h>
 #include <linux/string.h>
-
 #include <asm/uaccess.h>
 
 #include "mali_kernel_common.h" /* MALI_xxx macros */
 #include "mali_osk.h"           /* kernel side OS functions */
 #include "mali_uk_types.h"
-#include "mali_kernel_linux.h"  /* exports initialize/terminate_kernel_device() */
+#include "mali_kernel_linux.h"  /* exports initialize/terminate_kernel_device() definition of mali_osk_low_level_mem_init() and term */
 
-extern struct platform_device *mali_platform_device;
+extern struct platform_device *mali_plat_device;
 
 /* Help to convert platform device resources into mali resources */
 struct mali_resource_properties
@@ -53,6 +52,7 @@ struct mali_resource_properties mali_resource_table[] = {
 	{ "MEMORY", MEMORY, 0, 0 },
 	{ "EXTERNAL_MEMORY_RANGE", MEM_VALIDATION, 0, 0 }
 };
+
 
 /* is called from mali_kernel_constructor in common code */
 _mali_osk_errcode_t _mali_osk_init( void )
@@ -124,15 +124,16 @@ static int mali_get_mem_resources(_mali_osk_resource_t *resources, struct stm_ma
 	return _MALI_OSK_ERR_OK;
 }
 
+
 _mali_osk_errcode_t _mali_osk_resources_init( _mali_osk_resource_t **arch_config, u32 *num_resources )
 {
 	struct resource *platform_resource;
 	_mali_osk_resource_t *resources;
 	int n,resource_count;
 	struct stm_mali_config *mali_config = (struct stm_mali_config *)
-							mali_platform_device->dev.platform_data;
+							mali_plat_device->dev.platform_data;
 
-	resource_count = mali_platform_device->num_resources +
+	resource_count = mali_plat_device->num_resources +
 			 mali_config->num_mem_resources +
 			 mali_config->num_ext_resources; 
 
@@ -142,7 +143,7 @@ _mali_osk_errcode_t _mali_osk_resources_init( _mali_osk_resource_t **arch_config
 
         resource_count = 0;
         n = 0;
-	while((platform_resource = platform_get_resource(mali_platform_device,IORESOURCE_MEM,n)) != NULL)
+	while((platform_resource = platform_get_resource(mali_plat_device,IORESOURCE_MEM,n)) != NULL)
 	{
 		_mali_osk_resource_t *mali_resource = &resources[resource_count];
 		struct mali_resource_properties *properties;
@@ -169,7 +170,7 @@ _mali_osk_errcode_t _mali_osk_resources_init( _mali_osk_resource_t **arch_config
 		{
 			int irq;
 			MALI_DEBUG_PRINT(3, ("finding IRQ for %s\n",platform_resource->name));
-			if((irq = platform_get_irq_byname(mali_platform_device,platform_resource->name)) < 0)
+			if((irq = platform_get_irq_byname(mali_plat_device,platform_resource->name)) < 0)
 			{
 				MALI_PRINT(("Unable to find IRQ resource for %s\n",platform_resource->name));
 				goto error;
@@ -206,7 +207,8 @@ error:
         MALI_ERROR(_MALI_OSK_ERR_FAULT);
 }
 
+
 void _mali_osk_resources_term( _mali_osk_resource_t **arch_config, u32 num_resources )
 {
-	kfree(*arch_config);
+    /* Nothing to do */
 }

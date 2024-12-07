@@ -86,7 +86,7 @@ struct mali_kernel_subsystem mali_subsystem_pmm=
 #if MALI_STATE_TRACKING
 	malipmm_subsystem_dump_state,                       /* dump_state */
 #endif
-};
+} ;
 
 #if PMM_OS_TEST
 
@@ -572,10 +572,6 @@ void malipmm_force_powerup( void )
 	MALI_PMM_LOCK(pmm);
 	pmm->status = MALI_PMM_STATUS_OFF;
 	pmm_cores_registered_mask = pmm->cores_registered;
-	if( ( pmm->status == MALI_PMM_STATUS_OS_POWER_DOWN ) && ( pmm->is_dvfs_active == 1 ) ) 
-	{
-		_mali_osk_pmm_dvfs_operation_done(0);
-	}
 	MALI_PMM_UNLOCK(pmm);
 	
 	/* flush PMM workqueue */
@@ -614,6 +610,7 @@ void malipmm_kernel_subsystem_terminate( mali_kernel_subsystem_identifier id )
 		pmm_state->mali_pmm_lock_acquired = 0;
 #endif /* MALI_STATE_TRACKING */
 		MALI_PMM_UNLOCK(pmm_state);
+		_mali_osk_pmm_ospmm_cleanup();
 		pmm_policy_term(pmm_state);
 		_mali_osk_irq_term( pmm_state->irq );
 		_mali_osk_notification_queue_term( pmm_state->queue );
@@ -860,10 +857,10 @@ static void pmm_event_process( void )
 					return;
 				}
 				else
-				{
+				{					
 					#if (MALI_PMM_TRACE || MALI_STATE_TRACKING)
 						pmm->messages_received++;
-					#endif
+					#endif		
 				}
 			}
 			else
@@ -878,7 +875,7 @@ static void pmm_event_process( void )
 		{
 			#if (MALI_PMM_TRACE || MALI_STATE_TRACKING)
 				pmm->imessages_received++;
-			#endif
+			#endif		
 		}
 
 		MALI_DEBUG_ASSERT_POINTER( msg );

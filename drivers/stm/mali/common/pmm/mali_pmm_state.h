@@ -94,7 +94,7 @@ typedef struct _mali_pmm_internal_state
 	u32 missed;                             /**< PMM missed events due to OOM */
 	mali_bool fatal_power_err;				/**< PMM has had a fatal power error? */
 	u32 is_dvfs_active;			/**< PMM DVFS activity */
-
+	
 #if MALI_STATE_TRACKING
 	mali_pmm_status mali_last_pmm_status;  /**< The previous PMM status */
 	mali_pmm_event_id mali_new_event_status;/**< The type of the last PMM event */

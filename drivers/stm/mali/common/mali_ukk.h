@@ -663,7 +663,7 @@ _mali_osk_errcode_t _mali_ukk_profiling_start(_mali_uk_profiling_start_s *args);
 _mali_osk_errcode_t _mali_ukk_profiling_add_event(_mali_uk_profiling_add_event_s *args);
 
 /** @brief Stop recording profiling events.
- * 
+ *
  * @param args see _mali_uk_profiling_stop_s in "mali_uk_types.h"
  */
 _mali_osk_errcode_t _mali_ukk_profiling_stop(_mali_uk_profiling_stop_s *args);

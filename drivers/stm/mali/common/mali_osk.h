@@ -54,7 +54,7 @@ extern "C"
 /** @brief Mali Boolean type which uses MALI_TRUE and MALI_FALSE
   */
 	typedef unsigned long mali_bool;
-	
+
 #ifndef MALI_TRUE
 	#define MALI_TRUE ((mali_bool)1)
 #endif
@@ -881,7 +881,7 @@ void *_mali_osk_memset( void *s, u32 c, u32 n );
 
 /** @brief Checks the amount of memory allocated
  *
- * Checks that not more than \a max_allocated bytes are allocated. 
+ * Checks that not more than \a max_allocated bytes are allocated.
  *
  * Some OS bring up an interactive out of memory dialogue when the
  * system runs out of memory. This can stall non-interactive
@@ -889,7 +889,7 @@ void *_mali_osk_memset( void *s, u32 c, u32 n );
  * not trigger the OOM dialogue by keeping allocations
  * within a certain limit.
  *
- * @return MALI_TRUE when \a max_allocated bytes are not in use yet. MALI_FALSE 
+ * @return MALI_TRUE when \a max_allocated bytes are not in use yet. MALI_FALSE
  * when at least \a max_allocated bytes are in use.
  */
 mali_bool _mali_osk_mem_check_allocated( u32 max_allocated );
@@ -1157,7 +1157,7 @@ void _mali_osk_cache_flushall( void );
  *
  * Some OS do not perform a full cache flush (including all outer caches) for uncached mapped memory.
  * They zero the memory through a cached mapping, then flush the inner caches but not the outer caches.
- * This is required for MALI to have the correct view of the memory. 
+ * This is required for MALI to have the correct view of the memory.
  */
 void _mali_osk_cache_ensure_uncached_range_flushed( void *uncached_mapping, u32 offset, u32 size );
 
@@ -1532,7 +1532,7 @@ u32	_mali_osk_time_tickcount( void );
 void _mali_osk_time_ubusydelay( u32 usecs );
 
 /** @brief Return time in nano seconds, since any given reference.
- * 
+ *
  * @return Time in nano seconds
  */
 u64 _mali_osk_time_get_ns( void );
