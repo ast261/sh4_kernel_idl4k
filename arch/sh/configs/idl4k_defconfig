@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.32.42
-# Thu Jan 26 12:43:21 2012
+# Sun Jul 20 09:55:43 2025
 #
 CONFIG_SUPERH=y
 CONFIG_SUPERH32=y
@@ -740,8 +740,11 @@ CONFIG_PHYLIB=y
 CONFIG_MII=y
 CONFIG_NETDEV_1000=y
 CONFIG_STMMAC_ETH=y
+# CONFIG_STMMAC_DEBUG_FS is not set
 # CONFIG_STMMAC_DA is not set
 # CONFIG_STMMAC_TIMER is not set
+CONFIG_STMMAC_RING=y
+# CONFIG_STMMAC_CHAINED is not set
 CONFIG_NETDEV_10000=y
 # CONFIG_WLAN is not set
 
