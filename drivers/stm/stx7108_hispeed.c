@@ -33,21 +33,6 @@
 /* Turn-on to only debug retiming setting for example on eth driver */
 /*#define DEBUG_RETIME_CONF*/
 
-#define ETH_MDIO_BIDIR(_gmac, _port, _pin, _retiming) \
-	{ \
-		.gpio = stm_gpio(_port, _pin), \
-		.direction = stm_pad_gpio_direction_custom, \
-		.function = 1 + _gmac, \
-		.priv = &(struct stx7108_pio_config) {	\
-			.retime = &_retiming, \
-			.mode = &(struct stx7108_pio_mode_config) { \
-				.oe = 0, \
-				.pu = 1, \
-				.od = 0, \
-			}, \
-		}, \
-	}
-
 static void stx7108_pio_dump_pad_config(const char *name, int port,
 					struct stm_pad_config *pad_config)
 {
@@ -402,70 +387,6 @@ static struct stm_pad_config stx7108_ethernet_rgmii_pad_configs[] = {
 		},
 	},
 };
-#define RMII_PHY_CLOCK(_gmac, _port, _pin, _retiming) \
-	{ \
-		.gpio = stm_gpio(_port, _pin), \
-		.direction = stm_pad_gpio_direction_in, \
-		.function = 2, \
-		.name = "PHYCLK", \
-		.priv = &(struct stx7108_pio_config) { \
-			.retime = &_retiming, \
-		}, \
-	}
-
-static struct stx7108_pio_retime_config rmii_txd_retime_bypass = {
-	.retime = 1,
-	.clk1notclk0 = 1,
-	.clknotdata = 0,
-	.double_edge = 0,
-	.invertclk = 0,
-	.delay_input = 0,
-};
-
-static struct stx7108_pio_retime_config rmii_mdio_retime_bypass = {
-	.retime = 0,
-	.clk1notclk0 = -1,
-	.clknotdata = 0,
-	.double_edge = -1,
-	.invertclk = -1,
-	.delay_input = 3,
-};
-static struct stx7108_pio_retime_config rmii_mdc_retime_bypass = {
-	.retime = 1,
-	.clk1notclk0 = 0,
-	.clknotdata = 1,
-	.double_edge = -1,
-	.invertclk = 0,
-	.delay_input = 0,
-};
-
-static struct stx7108_pio_retime_config rmii_mdint_retime_bypass = {
-	.retime = 0,
-	.clk1notclk0 = -1,
-	.clknotdata = 0,
-	.double_edge = -1,
-	.invertclk = -1,
-	.delay_input = 0,
-};
-
-static struct stx7108_pio_retime_config rmii_rxd_retime_bypass = {
-	.retime = 1,
-	.clk1notclk0 = 1,
-	.clknotdata = 0,
-	.double_edge = 0,
-	.invertclk = 0,
-	.delay_input = 2,
-};
-
-static struct stx7108_pio_retime_config rmii_retime_phy_clock = {
-	.retime = 1,
-	.clk1notclk0 = 0,
-	.clknotdata = 1,
-	.double_edge = -1,
-	.invertclk = 0,
-	.delay_input = 0,
-};
-
 
 static struct stm_pad_config stx7108_ethernet_rmii_pad_configs[] = {
 	[0] = {
