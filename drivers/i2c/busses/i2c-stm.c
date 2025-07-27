@@ -1056,6 +1056,10 @@ static void iic_stm_setup_timing(struct iic_ssc *adap)
 	dbg_print("Assuming %lu MHz for the Timing Setup\n", clock / 1000000);
 
 	ns_per_clk = NANOSEC_PER_SEC / clock;
+	printk("stm i2c clock = %lu, ns_per_clk = %lu\n", clock, ns_per_clk);
+	clock = clock / 2;
+	ns_per_clk = NANOSEC_PER_SEC / clock;
+	printk("stm i2c modified clock = %lu, ns_per_clk = %lu\n", clock, ns_per_clk);
 
 	if (check_fastmode(adap)) {
 		set_ready_fastmode(adap);
