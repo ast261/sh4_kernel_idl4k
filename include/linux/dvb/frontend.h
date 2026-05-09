@@ -62,6 +62,7 @@ typedef enum fe_caps {
 	FE_CAN_8VSB			= 0x200000,
 	FE_CAN_16VSB			= 0x400000,
 	FE_HAS_EXTENDED_CAPS		= 0x800000,   /* We need more bitspace for newer APIs, indicate this. */
+	FE_CAN_MULTISTREAM		= 0x4000000,  /* frontend supports multistream filtering */
 	FE_CAN_TURBO_FEC		= 0x8000000,  /* frontend supports "turbo fec modulation" */
 	FE_CAN_2G_MODULATION		= 0x10000000, /* frontend supports "2nd generation modulation" (DVB-S2) */
 	FE_NEEDS_BENDING		= 0x20000000, /* not supported anymore, don't use (frontend requires frequency bending) */
@@ -335,15 +336,16 @@ struct dvb_frontend_event {
 
 #define DTV_ISDBT_LAYER_ENABLED	41
 
-#define DTV_ISDBS_TS_ID		42
+#define DTV_STREAM_ID		42
+#define DTV_ISDBS_TS_ID_LEGACY	DTV_STREAM_ID
 
-#define DTV_DVBT2_PLP_ID	43
+#define DTV_DVBT2_PLP_ID_LEGACY	43
 
 #define DTV_ENUM_DELSYS		44
 
-#define DTV_INTERLEAVING			45
+#define DTV_INTERLEAVING  45
 
-#define DTV_MAX_COMMAND				DTV_INTERLEAVING
+#define DTV_MAX_COMMAND		DTV_INTERLEAVING
 
 typedef enum fe_pilot {
 	PILOT_ON,
@@ -383,7 +385,7 @@ typedef enum fe_delivery_system {
 /* backward compatibility */
 #define SYS_DVBC_ANNEX_AC	SYS_DVBC_ANNEX_A
 #define SYS_DMBTH SYS_DTMB /* DMB-TH is legacy name, use DTMB instead */
-
+#define NO_STREAM_ID_FILTER	(~0U)
 
 struct dtv_cmds_h {
 	char	*name;		/* A display name for debugging purposes */
