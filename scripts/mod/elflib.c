@@ -85,7 +85,7 @@ static int parse_elf_rw(struct elf_info *info, const char *filename,
 	Elf_Ehdr *hdr;
 	Elf_Shdr *sechdrs;
 	Elf_Sym  *sym;
-	char *lkm_suffix;
+	const char *lkm_suffix;
 
 	hdr = grab_file_rw(filename, &info->size, write);
 	if (!hdr) {
