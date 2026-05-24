@@ -205,7 +205,7 @@ static int stm_hom_enter(void)
 {
 	unsigned long *_ztext = (unsigned long *)
 		(CONFIG_HOM_TAG_VIRTUAL_ADDRESS);
-	long flag;
+	unsigned long flag;
 	unsigned long lpj =
 		(cpu_data[raw_smp_processor_id()].loops_per_jiffy * HZ) / 1000;
 

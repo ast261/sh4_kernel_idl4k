@@ -31,7 +31,9 @@
 #include "reg_pio.h"
 
 
+#ifndef CONFIG_STPIO
 #define CONFIG_STPIO
+#endif
 
 struct stpio_pin {
 #ifdef CONFIG_STPIO

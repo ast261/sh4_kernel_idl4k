@@ -141,7 +141,7 @@ int usb_control_msg(struct usb_device *dev, unsigned int pipe, __u8 request,
 	if (!dr)
 		return -ENOMEM;
 
-	data2 = kmalloc(max(size, 2), GFP_KERNEL);
+	data2 = kmalloc(max_t(int, size, 2), GFP_KERNEL);
 	if (data2 == NULL) {
 		kfree(dr);
 		return -ENOMEM;
