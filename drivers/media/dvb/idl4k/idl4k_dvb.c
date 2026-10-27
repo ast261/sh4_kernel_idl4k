@@ -1,9 +1,20 @@
 /*
  * Inverto IDL4K: one DVB adapter per satellite input.
  *
+ * Two STV0900 dual demodulators (I2C 0x68, 0x69), each with an STV6120
+ * dual tuner behind its I2C repeater (0x60, 0x63), and one LNBH24 per RF
+ * input.  Frontend 2n is path 1 of demodulator n and uses tuner 2 of its
+ * STV6120, frontend 2n + 1 is path 2 with tuner 1.  Frontend n takes RF
+ * input n unless the rf_input parameter says otherwise.
+ *
+ * The LNB of RF input n is the LNBH24 of input n; its 22 kHz / DiSEqC
+ * signal comes from the demodulator path of frontend n.  So the voltage,
+ * tone and DiSEqC of a frontend go to the LNB supply and the demodulator
+ * path of its RF input, not to its own.
+ *
  * The demux of each adapter programs PID filters on the TANGO transport
  * processor (tango-pti) and gets the filtered packets back into the
- * software demux.  The frontends are not attached here yet.
+ * software demux.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2.
@@ -13,15 +24,36 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/err.h>
+#include <linux/delay.h>
+#include <linux/gpio.h>
+#include <linux/i2c.h>
+#include <linux/stm/gpio.h>
 #include <media/tango_pti.h>
 
 #include "dvbdev.h"
 #include "dvb_demux.h"
 #include "dmxdev.h"
+#include "dvb_frontend.h"
+#include "stv6120.h"	/* before stv090x.h: enum tuner_mode */
+#include "stv090x.h"
+#include "lnbh24.h"
 
 #define IDL4K_INPUTS	4
+#define IDL4K_I2C_BUS	0
+
+/* reset of demodulator 0 / 1, active low */
+static const unsigned int idl4k_demod_reset[2] = {
+	stm_gpio(9, 4), stm_gpio(9, 5)
+};
+static const u8 idl4k_demod_addr[2] = { 0x68, 0x69 };
+static const u8 idl4k_tuner_addr[2] = { 0x60, 0x63 };
+static const u8 idl4k_lnb_addr[IDL4K_INPUTS] = { 0x08, 0x0a, 0x09, 0x0b };
 
 DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
+
+static int rf_input[IDL4K_INPUTS] = { 0, 1, 2, 3 };
+module_param_array(rf_input, int, NULL, 0444);
+MODULE_PARM_DESC(rf_input, "RF input (0..3 = A..D) of each frontend");
 
 struct idl4k_adapter {
 	int index;
@@ -31,9 +63,19 @@ struct idl4k_adapter {
 	struct dmx_frontend hw_frontend;
 	struct dmx_frontend mem_frontend;
 	struct tango_pti_input *input;
+	struct stv090x_config demod_config;
+	struct stv6120_config tuner_config;
+	struct dvb_frontend *fe;
+
+	/* tone / DiSEqC of this demodulator path, for the LNB of input index */
+	int (*set_tone)(struct dvb_frontend *fe, fe_sec_tone_mode_t tone);
+	int (*send_master_cmd)(struct dvb_frontend *fe,
+			       struct dvb_diseqc_master_cmd *cmd);
+	int (*send_burst)(struct dvb_frontend *fe, fe_sec_mini_cmd_t burst);
 };
 
 static struct idl4k_adapter *adapters[IDL4K_INPUTS];
+static struct i2c_adapter *idl4k_i2c;
 
 static int idl4k_start_feed(struct dvb_demux_feed *feed)
 {
@@ -57,10 +99,105 @@ static void idl4k_data(void *priv, const u8 *packets, unsigned int count)
 	dvb_dmx_swfilter_packets(&a->demux, packets, count);
 }
 
+/* adapter whose demodulator path drives the LNB of a's RF input */
+static struct idl4k_adapter *idl4k_lnb_owner(struct dvb_frontend *fe)
+{
+	struct idl4k_adapter *a = fe->dvb->priv;
+
+	return adapters[a->tuner_config.rf_input];
+}
+
+static int idl4k_set_tone(struct dvb_frontend *fe, fe_sec_tone_mode_t tone)
+{
+	struct idl4k_adapter *o = idl4k_lnb_owner(fe);
+
+	return o ? o->set_tone(o->fe, tone) : -ENODEV;
+}
+
+static int idl4k_send_master_cmd(struct dvb_frontend *fe,
+				 struct dvb_diseqc_master_cmd *cmd)
+{
+	struct idl4k_adapter *o = idl4k_lnb_owner(fe);
+
+	return o ? o->send_master_cmd(o->fe, cmd) : -ENODEV;
+}
+
+static int idl4k_send_burst(struct dvb_frontend *fe, fe_sec_mini_cmd_t burst)
+{
+	struct idl4k_adapter *o = idl4k_lnb_owner(fe);
+
+	return o ? o->send_burst(o->fe, burst) : -ENODEV;
+}
+
+static int idl4k_frontend_attach(struct idl4k_adapter *a)
+{
+	struct stv090x_config *dc = &a->demod_config;
+	struct stv6120_config *tc = &a->tuner_config;
+	struct stv6120_devctl *ctl;
+	int chip = a->index / 2, path = a->index % 2;
+
+	dc->device = STV0900;
+	dc->demod_mode = STV090x_DUAL;
+	dc->clk_mode = STV090x_CLK_EXT;
+	dc->xtal = 30000000;
+	dc->address = idl4k_demod_addr[chip];
+	dc->ts1_mode = STV090x_TSMODE_SERIAL_CONTINUOUS;
+	dc->ts2_mode = STV090x_TSMODE_SERIAL_CONTINUOUS;
+	dc->ts_serial_ts1_ts2 = 1;
+	dc->repeater_level = STV090x_RPTLEVEL_32;
+	dc->tuner_on_rpt1 = 1;
+
+	a->fe = stv090x_attach(dc, idl4k_i2c,
+			       path ? STV090x_DEMODULATOR_1 : STV090x_DEMODULATOR_0);
+	if (!a->fe)
+		return -ENODEV;
+
+	tc->addr = idl4k_tuner_addr[chip];
+	tc->refclk = 30000000;
+	tc->clk_div = 1;
+	tc->tuner = path ? 1 : 2;
+	tc->rf_input = rf_input[a->index] & 3;
+	ctl = stv6120_attach(a->fe, tc, idl4k_i2c);
+	if (!ctl)
+		goto err;
+	dc->tuner_init = ctl->tuner_init;
+	dc->tuner_sleep = ctl->tuner_sleep;
+	dc->tuner_set_mode = ctl->tuner_set_mode;
+	dc->tuner_set_frequency = ctl->tuner_set_frequency;
+	dc->tuner_get_frequency = ctl->tuner_get_frequency;
+	dc->tuner_set_bandwidth = ctl->tuner_set_bandwidth;
+	dc->tuner_get_bandwidth = ctl->tuner_get_bandwidth;
+	dc->tuner_get_status = ctl->tuner_get_status;
+
+	if (!lnbh24_attach(a->fe, idl4k_i2c, LNBH24_TTX, 0,
+			   idl4k_lnb_addr[tc->rf_input]))
+		goto err;
+
+	a->set_tone = a->fe->ops.set_tone;
+	a->send_master_cmd = a->fe->ops.diseqc_send_master_cmd;
+	a->send_burst = a->fe->ops.diseqc_send_burst;
+	a->fe->ops.set_tone = idl4k_set_tone;
+	a->fe->ops.diseqc_send_master_cmd = idl4k_send_master_cmd;
+	a->fe->ops.diseqc_send_burst = idl4k_send_burst;
+
+	if (dvb_register_frontend(&a->adapter, a->fe) < 0)
+		goto err;
+	return 0;
+
+err:
+	dvb_frontend_detach(a->fe);
+	a->fe = NULL;
+	return -ENODEV;
+}
+
 static void idl4k_adapter_remove(struct idl4k_adapter *a)
 {
 	struct dmx_demux *dmx = &a->demux.dmx;
 
+	if (a->fe) {
+		dvb_unregister_frontend(a->fe);
+		dvb_frontend_detach(a->fe);
+	}
 	dmx->remove_frontend(dmx, &a->mem_frontend);
 	dmx->remove_frontend(dmx, &a->hw_frontend);
 	dvb_dmxdev_release(&a->dmxdev);
@@ -84,6 +221,7 @@ static struct idl4k_adapter *idl4k_adapter_add(int n)
 	err = dvb_register_adapter(&a->adapter, "IDL4K", THIS_MODULE, NULL, adapter_nr);
 	if (err < 0)
 		goto err_free;
+	a->adapter.priv = a;
 
 	a->input = tango_pti_input_get(n, idl4k_data, a);
 	if (IS_ERR(a->input)) {
@@ -121,6 +259,9 @@ static struct idl4k_adapter *idl4k_adapter_add(int n)
 	err = dmx->connect_frontend(dmx, &a->hw_frontend);
 	if (err < 0)
 		goto err_mem;
+	err = idl4k_frontend_attach(a);
+	if (err < 0)
+		goto err_mem;
 	return a;
 
 err_mem:
@@ -140,18 +281,54 @@ err_free:
 	return ERR_PTR(err);
 }
 
+static void idl4k_demod_reset_release(int n)
+{
+	while (n--)
+		gpio_free(idl4k_demod_reset[n]);
+}
+
+/* reset both demodulators once, before the first access */
+static int idl4k_demod_reset_pulse(void)
+{
+	int n, err;
+
+	for (n = 0; n < ARRAY_SIZE(idl4k_demod_reset); n++) {
+		err = gpio_request(idl4k_demod_reset[n], "demod reset");
+		if (err < 0) {
+			idl4k_demod_reset_release(n);
+			return err;
+		}
+		gpio_direction_output(idl4k_demod_reset[n], 0);
+	}
+	msleep(20);
+	for (n = 0; n < ARRAY_SIZE(idl4k_demod_reset); n++)
+		gpio_set_value(idl4k_demod_reset[n], 1);
+	msleep(20);
+	return 0;
+}
+
 static int __init idl4k_dvb_init(void)
 {
-	int n;
+	int n, err;
+
+	idl4k_i2c = i2c_get_adapter(IDL4K_I2C_BUS);
+	if (!idl4k_i2c)
+		return -ENODEV;
+	err = idl4k_demod_reset_pulse();
+	if (err < 0) {
+		i2c_put_adapter(idl4k_i2c);
+		return err;
+	}
 
 	for (n = 0; n < IDL4K_INPUTS; n++) {
 		adapters[n] = idl4k_adapter_add(n);
 		if (IS_ERR(adapters[n])) {
-			int err = PTR_ERR(adapters[n]);
-
+			err = PTR_ERR(adapters[n]);
 			adapters[n] = NULL;
 			while (n--)
 				idl4k_adapter_remove(adapters[n]);
+			idl4k_demod_reset_release(ARRAY_SIZE(idl4k_demod_reset));
+			i2c_put_adapter(idl4k_i2c);
 			return err;
 		}
 	}
@@ -165,6 +342,8 @@ static void __exit idl4k_dvb_exit(void)
 	for (n = IDL4K_INPUTS - 1; n >= 0; n--)
 		if (adapters[n])
 			idl4k_adapter_remove(adapters[n]);
+	idl4k_demod_reset_release(ARRAY_SIZE(idl4k_demod_reset));
+	i2c_put_adapter(idl4k_i2c);
 }
 
 module_init(idl4k_dvb_init);
