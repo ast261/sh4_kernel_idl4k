@@ -11,9 +11,10 @@
  * signal comes from the demodulator path of frontend n.  So the voltage,
  * tone and DiSEqC of a frontend go to the LNB supply and the demodulator
  * path of its RF input, not to its own.  The LNB supply of an input stays
- * on while any frontend on that input wants it, and while it is in use,
- * DiSEqC from another frontend on that input is dropped: its tone bursts
- * would switch the LNB band under the running stream.
+ * on while any frontend on that input wants it.  While it is in use,
+ * another frontend on that input gets -EBUSY for a different voltage or
+ * tone, and its DiSEqC is dropped: either would switch the LNB polarisation
+ * or band under the running stream.
  *
  * The demux of each adapter programs PID filters on the TANGO transport
  * processor (tango-pti) and gets the filtered packets back into the
@@ -71,9 +72,11 @@ struct idl4k_adapter {
 	struct stv6120_config tuner_config;
 	struct dvb_frontend *fe;
 
-	/* LNB supply of this frontend's RF input, and the voltage it wants */
+	/* LNB supply of this frontend's RF input, and the voltage and tone
+	 * this frontend has set on it */
 	int (*set_voltage)(struct dvb_frontend *fe, fe_sec_voltage_t voltage);
 	fe_sec_voltage_t voltage;
+	fe_sec_tone_mode_t tone;
 
 	/* tone / DiSEqC of this demodulator path, for the LNB of input index */
 	int (*set_tone)(struct dvb_frontend *fe, fe_sec_tone_mode_t tone);
@@ -116,46 +119,93 @@ static struct idl4k_adapter *idl4k_lnb_owner(struct dvb_frontend *fe)
 	return adapters[a->tuner_config.rf_input];
 }
 
-/* Frontends on the same RF input share its LNB supply: only switch it off
- * when none of them wants it any more */
-static int idl4k_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
+/* another frontend on a's RF input with the LNB supply on, if any;
+ * called with idl4k_lnb_lock held */
+static struct idl4k_adapter *idl4k_lnb_user(struct idl4k_adapter *a)
 {
-	struct idl4k_adapter *a = fe->dvb->priv;
-	fe_sec_voltage_t v = voltage;
-	int n, ret;
+	int n;
 
-	mutex_lock(&idl4k_lnb_lock);
-	a->voltage = voltage;
-	for (n = 0; v == SEC_VOLTAGE_OFF && n < IDL4K_INPUTS; n++)
-		if (adapters[n] && adapters[n]->tuner_config.rf_input ==
-				   a->tuner_config.rf_input)
-			v = adapters[n]->voltage;
-	ret = a->set_voltage(fe, v);
-	mutex_unlock(&idl4k_lnb_lock);
-	return ret;
-}
-
-/* another frontend on a's RF input has the LNB supply on */
-static int idl4k_lnb_busy(struct idl4k_adapter *a)
-{
-	int n, busy = 0;
-
-	mutex_lock(&idl4k_lnb_lock);
 	for (n = 0; n < IDL4K_INPUTS; n++)
 		if (adapters[n] && adapters[n] != a &&
 		    adapters[n]->tuner_config.rf_input ==
 		    a->tuner_config.rf_input &&
 		    adapters[n]->voltage != SEC_VOLTAGE_OFF)
-			busy = 1;
+			return adapters[n];
+	return NULL;
+}
+
+/* Frontends on the same RF input share its LNB supply: only switch it off
+ * when none of them wants it any more, and refuse another voltage while
+ * one of them uses it */
+static int idl4k_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
+{
+	struct idl4k_adapter *a = fe->dvb->priv;
+	struct idl4k_adapter *u;
+	fe_sec_voltage_t v = voltage;
+	int ret;
+
+	mutex_lock(&idl4k_lnb_lock);
+	u = idl4k_lnb_user(a);
+	if (u && voltage == SEC_VOLTAGE_OFF)
+		v = u->voltage;
+	if (u && voltage != SEC_VOLTAGE_OFF && voltage != u->voltage) {
+		ret = -EBUSY;
+	} else {
+		ret = a->set_voltage(fe, v);
+		if (!ret)
+			a->voltage = voltage;
+	}
 	mutex_unlock(&idl4k_lnb_lock);
-	return busy;
+	return ret;
 }
 
 static int idl4k_set_tone(struct dvb_frontend *fe, fe_sec_tone_mode_t tone)
 {
+	struct idl4k_adapter *a = fe->dvb->priv;
 	struct idl4k_adapter *o = idl4k_lnb_owner(fe);
+	struct idl4k_adapter *u;
+	int ret;
 
-	return o ? o->set_tone(o->fe, tone) : -ENODEV;
+	if (!o)
+		return -ENODEV;
+	mutex_lock(&idl4k_lnb_lock);
+	u = idl4k_lnb_user(a);
+	if (u && tone != u->tone) {
+		ret = -EBUSY;
+	} else {
+		ret = o->set_tone(o->fe, tone);
+		if (!ret)
+			a->tone = tone;
+	}
+	mutex_unlock(&idl4k_lnb_lock);
+	return ret;
+}
+
+/* Last close of the frontend: it no longer uses the LNB.  dvb-core only
+ * switches the supply off when the frontend thread exits, which can be a
+ * minute later, and the other frontends on the input would get -EBUSY
+ * until then.  The supply itself stays as it is until that point. */
+static int idl4k_ts_bus_ctrl(struct dvb_frontend *fe, int acquire)
+{
+	struct idl4k_adapter *a = fe->dvb->priv;
+
+	if (!acquire) {
+		mutex_lock(&idl4k_lnb_lock);
+		a->voltage = SEC_VOLTAGE_OFF;
+		mutex_unlock(&idl4k_lnb_lock);
+	}
+	return 0;
+}
+
+/* DiSEqC while another frontend uses the LNB is dropped */
+static int idl4k_lnb_busy(struct idl4k_adapter *a)
+{
+	int busy;
+
+	mutex_lock(&idl4k_lnb_lock);
+	busy = idl4k_lnb_user(a) != NULL;
+	mutex_unlock(&idl4k_lnb_lock);
+	return busy;
 }
 
 static int idl4k_send_master_cmd(struct dvb_frontend *fe,
@@ -226,6 +276,7 @@ static int idl4k_frontend_attach(struct idl4k_adapter *a)
 	a->send_master_cmd = a->fe->ops.diseqc_send_master_cmd;
 	a->send_burst = a->fe->ops.diseqc_send_burst;
 	a->fe->ops.set_voltage = idl4k_set_voltage;
+	a->fe->ops.ts_bus_ctrl = idl4k_ts_bus_ctrl;
 	a->fe->ops.set_tone = idl4k_set_tone;
 	a->fe->ops.diseqc_send_master_cmd = idl4k_send_master_cmd;
 	a->fe->ops.diseqc_send_burst = idl4k_send_burst;
@@ -268,6 +319,7 @@ static struct idl4k_adapter *idl4k_adapter_add(int n)
 		return ERR_PTR(-ENOMEM);
 	a->index = n;
 	a->voltage = SEC_VOLTAGE_OFF;
+	a->tone = SEC_TONE_OFF;
 
 	err = dvb_register_adapter(&a->adapter, "IDL4K", THIS_MODULE, NULL, adapter_nr);
 	if (err < 0)
