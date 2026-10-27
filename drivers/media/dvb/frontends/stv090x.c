@@ -4748,12 +4748,17 @@ static int stv090x_init(struct dvb_frontend *fe)
 	if (stv090x_i2c_gate_ctrl(state, 0) < 0)
 		goto err;
 
-	if (state->device == STV0900) {
-		if (stv0900_set_tspath(state) < 0)
-			goto err;
-	} else {
-		if (stv0903_set_tspath(state) < 0)
-			goto err;
+	/* Setting the TS path resets both TS outputs: do it once per chip,
+	 * not on every open, or the other demod's stream gets a gap */
+	if (!state->internal->ts_configured) {
+		if (state->device == STV0900) {
+			if (stv0900_set_tspath(state) < 0)
+				goto err;
+		} else {
+			if (stv0903_set_tspath(state) < 0)
+				goto err;
+		}
+		state->internal->ts_configured = 1;
 	}
 
 	return 0;
@@ -4916,6 +4921,7 @@ static int stv090x_setup_compound(struct stv090x_state *state)
 		state->internal->num_used = 1;
 		state->internal->mclk = 0;
 		state->internal->dev_ver = 0;
+		state->internal->ts_configured = 0;
 		state->internal->i2c_adap = state->i2c;
 		state->internal->i2c_addr = state->config->address;
 		dprintk(FE_INFO, 1, "Create New Internal Structure!");

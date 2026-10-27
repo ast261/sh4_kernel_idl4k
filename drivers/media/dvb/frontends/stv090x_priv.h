@@ -226,6 +226,7 @@ struct stv090x_internal {
 	struct mutex		tuner_lock; /* Lock access to tuners */
 	s32			mclk; /* Masterclock Divider factor */
 	u32			dev_ver;
+	int			ts_configured; /* TS outputs set up */
 
 	int			num_used;
 };
