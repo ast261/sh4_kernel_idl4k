@@ -1,0 +1,10 @@
+config DVB_TANGO_PTI
+	tristate "STx7108 TANGO transport processor and TS inputs"
+	depends on CPU_SUBTYPE_STX7108
+	select FW_LOADER
+	help
+	  Live TS inputs (STFE) and hardware PID filtering on the TANGO
+	  transport processor of the STx7108.  The processor runs the
+	  Transport Engine firmware, loaded with request_firmware().
+
+	  The DVB adapters are created by the board driver on top of it.

@@ -36,6 +36,7 @@
 #include <linux/i2c/at24.h>
 #include <asm/sizes.h>
 #include <asm/irq-ilc.h>
+#include "idl4k-tango-pti.h"
 
 #undef GMAC_RGMII_MODE
 /*#define GMAC_RGMII_MODE*/
@@ -330,6 +331,9 @@ static int __init device_init(void)
 	/* PMEB pio */
 	gpio_request(stm_gpio(23, 1), "PMEB_PIO");
 	gpio_direction_input(stm_gpio(23, 1));
+
+	/* TS inputs of the four demodulator paths */
+	platform_device_register(&idl4k_tango_pti_device);
 
 	return 0;
 }
