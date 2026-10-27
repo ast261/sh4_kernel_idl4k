@@ -10,7 +10,10 @@
  * The LNB of RF input n is the LNBH24 of input n; its 22 kHz / DiSEqC
  * signal comes from the demodulator path of frontend n.  So the voltage,
  * tone and DiSEqC of a frontend go to the LNB supply and the demodulator
- * path of its RF input, not to its own.
+ * path of its RF input, not to its own.  The LNB supply of an input stays
+ * on while any frontend on that input wants it, and while it is in use,
+ * DiSEqC from another frontend on that input is dropped: its tone bursts
+ * would switch the LNB band under the running stream.
  *
  * The demux of each adapter programs PID filters on the TANGO transport
  * processor (tango-pti) and gets the filtered packets back into the
@@ -27,6 +30,7 @@
 #include <linux/delay.h>
 #include <linux/gpio.h>
 #include <linux/i2c.h>
+#include <linux/mutex.h>
 #include <linux/stm/gpio.h>
 #include <media/tango_pti.h>
 
@@ -67,6 +71,10 @@ struct idl4k_adapter {
 	struct stv6120_config tuner_config;
 	struct dvb_frontend *fe;
 
+	/* LNB supply of this frontend's RF input, and the voltage it wants */
+	int (*set_voltage)(struct dvb_frontend *fe, fe_sec_voltage_t voltage);
+	fe_sec_voltage_t voltage;
+
 	/* tone / DiSEqC of this demodulator path, for the LNB of input index */
 	int (*set_tone)(struct dvb_frontend *fe, fe_sec_tone_mode_t tone);
 	int (*send_master_cmd)(struct dvb_frontend *fe,
@@ -76,6 +84,7 @@ struct idl4k_adapter {
 
 static struct idl4k_adapter *adapters[IDL4K_INPUTS];
 static struct i2c_adapter *idl4k_i2c;
+static DEFINE_MUTEX(idl4k_lnb_lock);
 
 static int idl4k_start_feed(struct dvb_demux_feed *feed)
 {
@@ -107,6 +116,41 @@ static struct idl4k_adapter *idl4k_lnb_owner(struct dvb_frontend *fe)
 	return adapters[a->tuner_config.rf_input];
 }
 
+/* Frontends on the same RF input share its LNB supply: only switch it off
+ * when none of them wants it any more */
+static int idl4k_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
+{
+	struct idl4k_adapter *a = fe->dvb->priv;
+	fe_sec_voltage_t v = voltage;
+	int n, ret;
+
+	mutex_lock(&idl4k_lnb_lock);
+	a->voltage = voltage;
+	for (n = 0; v == SEC_VOLTAGE_OFF && n < IDL4K_INPUTS; n++)
+		if (adapters[n] && adapters[n]->tuner_config.rf_input ==
+				   a->tuner_config.rf_input)
+			v = adapters[n]->voltage;
+	ret = a->set_voltage(fe, v);
+	mutex_unlock(&idl4k_lnb_lock);
+	return ret;
+}
+
+/* another frontend on a's RF input has the LNB supply on */
+static int idl4k_lnb_busy(struct idl4k_adapter *a)
+{
+	int n, busy = 0;
+
+	mutex_lock(&idl4k_lnb_lock);
+	for (n = 0; n < IDL4K_INPUTS; n++)
+		if (adapters[n] && adapters[n] != a &&
+		    adapters[n]->tuner_config.rf_input ==
+		    a->tuner_config.rf_input &&
+		    adapters[n]->voltage != SEC_VOLTAGE_OFF)
+			busy = 1;
+	mutex_unlock(&idl4k_lnb_lock);
+	return busy;
+}
+
 static int idl4k_set_tone(struct dvb_frontend *fe, fe_sec_tone_mode_t tone)
 {
 	struct idl4k_adapter *o = idl4k_lnb_owner(fe);
@@ -119,6 +163,8 @@ static int idl4k_send_master_cmd(struct dvb_frontend *fe,
 {
 	struct idl4k_adapter *o = idl4k_lnb_owner(fe);
 
+	if (idl4k_lnb_busy(fe->dvb->priv))
+		return 0;
 	return o ? o->send_master_cmd(o->fe, cmd) : -ENODEV;
 }
 
@@ -126,6 +172,8 @@ static int idl4k_send_burst(struct dvb_frontend *fe, fe_sec_mini_cmd_t burst)
 {
 	struct idl4k_adapter *o = idl4k_lnb_owner(fe);
 
+	if (idl4k_lnb_busy(fe->dvb->priv))
+		return 0;
 	return o ? o->send_burst(o->fe, burst) : -ENODEV;
 }
 
@@ -173,9 +221,11 @@ static int idl4k_frontend_attach(struct idl4k_adapter *a)
 			   idl4k_lnb_addr[tc->rf_input]))
 		goto err;
 
+	a->set_voltage = a->fe->ops.set_voltage;
 	a->set_tone = a->fe->ops.set_tone;
 	a->send_master_cmd = a->fe->ops.diseqc_send_master_cmd;
 	a->send_burst = a->fe->ops.diseqc_send_burst;
+	a->fe->ops.set_voltage = idl4k_set_voltage;
 	a->fe->ops.set_tone = idl4k_set_tone;
 	a->fe->ops.diseqc_send_master_cmd = idl4k_send_master_cmd;
 	a->fe->ops.diseqc_send_burst = idl4k_send_burst;
@@ -217,6 +267,7 @@ static struct idl4k_adapter *idl4k_adapter_add(int n)
 	if (!a)
 		return ERR_PTR(-ENOMEM);
 	a->index = n;
+	a->voltage = SEC_VOLTAGE_OFF;
 
 	err = dvb_register_adapter(&a->adapter, "IDL4K", THIS_MODULE, NULL, adapter_nr);
 	if (err < 0)
