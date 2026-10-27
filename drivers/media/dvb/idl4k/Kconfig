@@ -1,0 +1,7 @@
+config DVB_IDL4K
+	tristate "Inverto IDL4K DVB-S/S2 adapters"
+	depends on DVB_CORE && DVB_TANGO_PTI
+	help
+	  The four satellite inputs of the IDL4K SAT>IP server: one DVB
+	  adapter per input, with the demux on the TANGO transport
+	  processor.
