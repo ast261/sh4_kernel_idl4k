@@ -364,7 +364,10 @@ struct dvb_frontend_event {
 #define DTV_INTERLEAVING			60
 #define DTV_LNA					61
 
-#define DTV_MAX_COMMAND				DTV_LNA
+/* Physical layer scrambling (DVB-S2 PLS), number as in mainline */
+#define DTV_SCRAMBLING_SEQUENCE_INDEX		70
+
+#define DTV_MAX_COMMAND				DTV_SCRAMBLING_SEQUENCE_INDEX
 
 typedef enum fe_pilot {
 	PILOT_ON,

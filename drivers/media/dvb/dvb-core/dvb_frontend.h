@@ -379,6 +379,9 @@ struct dtv_frontend_properties {
 	u8			atscmh_sccc_code_mode_b;
 	u8			atscmh_sccc_code_mode_c;
 	u8			atscmh_sccc_code_mode_d;
+
+	/* Physical layer scrambling specifics */
+	u32			scrambling_sequence_index;
 };
 
 struct dvb_frontend {

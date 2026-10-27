@@ -885,6 +885,7 @@ static int dvb_frontend_clear_cache(struct dvb_frontend *fe)
 	}
 
 	fe->dtv_property_cache.stream_id = NO_STREAM_ID_FILTER;
+	fe->dtv_property_cache.scrambling_sequence_index = 0;
 
 	return 0;
 }
@@ -1061,6 +1062,8 @@ static struct dtv_cmds_h dtv_cmds[DTV_MAX_COMMAND + 1] = {
 	_DTV_CMD(DTV_ATSCMH_SCCC_CODE_MODE_B, 0, 0),
 	_DTV_CMD(DTV_ATSCMH_SCCC_CODE_MODE_C, 0, 0),
 	_DTV_CMD(DTV_ATSCMH_SCCC_CODE_MODE_D, 0, 0),
+
+	_DTV_CMD(DTV_SCRAMBLING_SEQUENCE_INDEX, 1, 0),
 
 	/* Get */
 	[DTV_DISEQC_SLAVE_REPLY] = {
@@ -1561,6 +1564,11 @@ static int dtv_property_process_get(struct dvb_frontend *fe,
 		tvp->u.data = fe->dtv_property_cache.atscmh_sccc_code_mode_d;
 		break;
 
+	/* Physical layer scrambling */
+	case DTV_SCRAMBLING_SEQUENCE_INDEX:
+		tvp->u.data = fe->dtv_property_cache.scrambling_sequence_index;
+		break;
+
 	default:
 		r = -1;
 	}
@@ -1732,6 +1740,11 @@ static int dtv_property_process_set(struct dvb_frontend *fe,
 		break;
 	case DTV_ATSCMH_RS_FRAME_ENSEMBLE:
 		fe->dtv_property_cache.atscmh_rs_frame_ensemble = tvp->u.data;
+		break;
+
+	/* Physical layer scrambling */
+	case DTV_SCRAMBLING_SEQUENCE_INDEX:
+		fe->dtv_property_cache.scrambling_sequence_index = tvp->u.data;
 		break;
 
 	default:
