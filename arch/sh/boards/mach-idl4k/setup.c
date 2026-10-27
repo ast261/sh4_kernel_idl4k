@@ -17,6 +17,8 @@
 #include <linux/phy.h>
 #include <linux/gpio.h>
 #include <linux/leds.h>
+#include <linux/gpio_keys.h>
+#include <linux/input.h>
 #include <linux/tm1668.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/physmap.h>
@@ -99,6 +101,7 @@
 
 #define IDL4K_PIO_LED_POWER_WHITE stm_gpio(3, 1)
 #define IDL4K_PIO_LED_POWER_RED 	stm_gpio(3, 0)
+#define IDL4K_PIO_BTN_RESET stm_gpio(26, 7)
 
 typedef void (*stdby_callback_f)( int stdbyNoWakeUp );
 
@@ -215,17 +218,81 @@ static struct i2c_board_info idl4k_i2c_devices[] = {
 	},
 };
 
+/*
+ * Front panel.  The LEDs and the reset button are claimed only when the
+ * leds-gpio and gpio-keys modules are loaded.  The power LEDs are driven
+ * by the standby code below as well; it uses gpio_set_value() only, so it
+ * works whether or not leds-gpio owns the pins.
+ */
+static struct gpio_led idl4k_leds[] = {
+	{
+		.name = "power:red",
+		.gpio = IDL4K_PIO_LED_POWER_RED,
+		.default_state = LEDS_GPIO_DEFSTATE_KEEP,
+		.retain_state_suspended = 1,
+	}, {
+		.name = "power:white",
+		.gpio = IDL4K_PIO_LED_POWER_WHITE,
+		.default_state = LEDS_GPIO_DEFSTATE_KEEP,
+		.retain_state_suspended = 1,
+	}, {
+		.name = "net",
+		.gpio = stm_gpio(3, 2),
+	}, {
+		.name = "tuner1",
+		.gpio = stm_gpio(3, 3),
+	}, {
+		.name = "tuner2",
+		.gpio = stm_gpio(3, 4),
+	}, {
+		.name = "tuner3",
+		.gpio = stm_gpio(3, 5),
+	}, {
+		.name = "tuner4",
+		.gpio = stm_gpio(3, 6),
+	},
+};
+
+static struct platform_device idl4k_leds_device = {
+	.name = "leds-gpio",
+	.id = -1,
+	.dev.platform_data = &(struct gpio_led_platform_data) {
+		.num_leds = ARRAY_SIZE(idl4k_leds),
+		.leds = idl4k_leds,
+	},
+};
+
+static struct gpio_keys_button idl4k_buttons[] = {
+	{
+		.code = KEY_RESTART,
+		.gpio = IDL4K_PIO_BTN_RESET,
+		.active_low = 1,
+		.desc = "reset",
+		.type = EV_KEY,
+		.debounce_interval = 20,
+	},
+};
+
+static struct platform_device idl4k_keys_device = {
+	.name = "gpio-keys",
+	.id = -1,
+	.dev.platform_data = &(struct gpio_keys_platform_data) {
+		.buttons = idl4k_buttons,
+		.nbuttons = ARRAY_SIZE(idl4k_buttons),
+	},
+};
+
 void idl4k_switch_standby_led(int on)
 {
 	if ( on )
 	{
-		gpio_direction_output(IDL4K_PIO_LED_POWER_WHITE, 0);
-		gpio_direction_output(IDL4K_PIO_LED_POWER_RED, 1);
+		gpio_set_value(IDL4K_PIO_LED_POWER_WHITE, 0);
+		gpio_set_value(IDL4K_PIO_LED_POWER_RED, 1);
 	}
 	else
 	{
-		gpio_direction_output(IDL4K_PIO_LED_POWER_WHITE, 1);
-		gpio_direction_output(IDL4K_PIO_LED_POWER_RED, 0);
+		gpio_set_value(IDL4K_PIO_LED_POWER_WHITE, 1);
+		gpio_set_value(IDL4K_PIO_LED_POWER_RED, 0);
 	}
 }
 
@@ -235,8 +302,7 @@ void pm_suspend_board_ntfy(void)
 	gpio_direction_output(IDL4K_PIO_POWER_ON, 1);
 	gpio_direction_output(IDL4K_GPIO_VLNA_ON, 0);
 
-	gpio_direction_output(IDL4K_PIO_LED_POWER_WHITE, 0);
-	gpio_direction_output(IDL4K_PIO_LED_POWER_RED, 1);
+	idl4k_switch_standby_led(1);
 	mdelay(20);
 
     for ( i = 0; i < sizeof(stdby_callback_tab)/sizeof(stdby_callback_tab[0]); ++i)
@@ -256,8 +322,7 @@ void pm_wake_board_ntfy(void)
 
 	mdelay(20);
 
-	gpio_direction_output(IDL4K_PIO_LED_POWER_WHITE, 1);
-	gpio_direction_output(IDL4K_PIO_LED_POWER_RED, 0);
+	idl4k_switch_standby_led(0);
 
     for ( i = 0; i < sizeof(stdby_callback_tab)/sizeof(stdby_callback_tab[0]); ++i)
     {
@@ -320,13 +385,16 @@ static int __init device_init(void)
 			.banks = &idl4k_nand_flash,
 			.rbn.flex_connected = 1,});
 
-	gpio_request(IDL4K_PIO_LED_POWER_WHITE, "PWRL_WHITE");
-
+	/* Power LED white; the pins are left free for leds-gpio */
 	gpio_request(IDL4K_PIO_LED_POWER_WHITE, "PWRL_WHITE");
 	gpio_request(IDL4K_PIO_LED_POWER_RED, "PWRL_RED");
-
 	gpio_direction_output(IDL4K_PIO_LED_POWER_WHITE, 1);
 	gpio_direction_output(IDL4K_PIO_LED_POWER_RED, 0);
+	gpio_free(IDL4K_PIO_LED_POWER_WHITE);
+	gpio_free(IDL4K_PIO_LED_POWER_RED);
+
+	platform_device_register(&idl4k_leds_device);
+	platform_device_register(&idl4k_keys_device);
 
 	/* PMEB pio */
 	gpio_request(stm_gpio(23, 1), "PMEB_PIO");
