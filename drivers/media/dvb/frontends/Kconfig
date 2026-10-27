@@ -50,6 +50,13 @@ config DVB_STV6110x
 	help
 	  A Silicon tuner that supports DVB-S and DVB-S2 modes
 
+config DVB_STV6120
+	tristate "STV6120 based tuners"
+	depends on DVB_CORE && I2C
+	default m if DVB_FE_CUSTOMISE
+	help
+	  A dual silicon tuner that supports DVB-S and DVB-S2 modes
+
 comment "DVB-S (satellite) frontends"
 	depends on DVB_CORE
 
