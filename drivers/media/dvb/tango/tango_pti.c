@@ -63,7 +63,7 @@ static int tango_pti_thread(void *data)
 	int i;
 
 	while (!kthread_should_stop()) {
-		msleep(POLL_MS);
+		msleep_interruptible(POLL_MS);
 		mutex_lock(&pti->lock);
 		for (i = 0; i < pti->pdata->num_inputs; i++)
 			if (pti->input[i].running)
