@@ -90,6 +90,12 @@ struct memdma_regs {
 #define SLD_MASK		0x0000ffff
 #define PID_ENABLE		0x80000000
 #define CCSC_BYPASS		0x00010001
+#define STATUS_FIFO_OVERFLOW	0x00000001
+#define STATUS_BUFFER_OVERFLOW	0x00000002
+#define STATUS_PKT_OVERFLOW	0x00000010
+#define STATUS_ERROR_PKTS	0x00000f00
+#define STATUS_SHORT_PKTS	0x0000f000
+#define STATUS_LOCK		0x40000000
 
 #define IB(s, i)	((struct ib_regs __iomem *)((s)->stfe + IB_OFFSET) + (i))
 #define SYS(s)		((struct system_regs __iomem *)((s)->stfe + SYSTEM_OFFSET))
@@ -177,4 +183,17 @@ void tango_stfe_input_enable(struct tango_pti_input *in, int on)
 	writel(on ? (SYSTEM_ENABLE | SYSTEM_RESET) : 0, &ib->system);
 	if (!on)
 		rmw(&MEMDMA(pti)->dma_mode, 1 << in->ib, 0);
+}
+
+/* stptiTSHAL_TSInputStfeGetStatus; the error counts clear on read */
+void tango_stfe_input_status(struct tango_pti_input *in)
+{
+	u32 st = readl(&IB(in->pti, in->ib)->status);
+
+	in->lock = !!(st & STATUS_LOCK);
+	in->fifo_overflows += !!(st & STATUS_FIFO_OVERFLOW);
+	in->buffer_overflows += !!(st & STATUS_BUFFER_OVERFLOW);
+	in->pkt_overflows += !!(st & STATUS_PKT_OVERFLOW);
+	in->error_pkts += (st & STATUS_ERROR_PKTS) >> 8;
+	in->short_pkts += (st & STATUS_SHORT_PKTS) >> 12;
 }

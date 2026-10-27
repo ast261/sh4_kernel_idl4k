@@ -18,6 +18,8 @@
 #include <linux/kthread.h>
 #include <linux/delay.h>
 #include <linux/clk.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/stm/pad.h>
@@ -38,6 +40,9 @@ static void input_poll(struct tango_pti_input *in)
 
 	if (q >= size || q % TS_PKT_LEN)
 		return;
+	n = ((q + size - r) % size) / TS_PKT_LEN;
+	if (n > in->max_fill)
+		in->max_fill = n;
 	/* the buffer is cached: drop stale lines before reading what the TP wrote */
 	if (q < r) {
 		n = (size - r) / TS_PKT_LEN;
@@ -65,9 +70,12 @@ static int tango_pti_thread(void *data)
 	while (!kthread_should_stop()) {
 		msleep_interruptible(POLL_MS);
 		mutex_lock(&pti->lock);
-		for (i = 0; i < pti->pdata->num_inputs; i++)
-			if (pti->input[i].running)
-				input_poll(&pti->input[i]);
+		for (i = 0; i < pti->pdata->num_inputs; i++) {
+			if (!pti->input[i].running)
+				continue;
+			tango_stfe_input_status(&pti->input[i]);
+			input_poll(&pti->input[i]);
+		}
 		mutex_unlock(&pti->lock);
 	}
 	return 0;
@@ -216,6 +224,45 @@ void tango_pti_pid_remove(struct tango_pti_input *in, u16 pid)
 }
 EXPORT_SYMBOL_GPL(tango_pti_pid_remove);
 
+static int tango_pti_proc_show(struct seq_file *m, void *v)
+{
+	struct tango_pti *pti = m->private;
+	int i;
+
+	mutex_lock(&pti->lock);
+	tango_tp_show(pti, m);
+	for (i = 0; i < pti->pdata->num_inputs; i++) {
+		struct tango_pti_input *in = &pti->input[i];
+
+		seq_printf(m, "input %d: IB %d, %s", i, in->ib,
+			   in->running ? "running" : in->in_use ? "open" : "idle");
+		if (in->running)
+			seq_printf(m, ", STFE lock %s", in->lock ? "yes" : "no");
+		seq_printf(m, "\n  delivered %lu packets, output buffer peak %u of %u packets\n",
+			   in->packets, in->max_fill, OUT_BUF_PKTS);
+		seq_printf(m, "  STFE: FIFO overflows %lu, buffer overflows %lu, packet overflows %lu, error packets %lu, short packets %lu\n",
+			   in->fifo_overflows, in->buffer_overflows, in->pkt_overflows,
+			   in->error_pkts, in->short_pkts);
+		if (in->running)
+			tango_tp_input_show(in, m);
+	}
+	mutex_unlock(&pti->lock);
+	return 0;
+}
+
+static int tango_pti_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, tango_pti_proc_show, PDE(inode)->data);
+}
+
+static const struct file_operations tango_pti_proc_fops = {
+	.owner = THIS_MODULE,
+	.open = tango_pti_proc_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
 static void free_buffers(struct tango_pti *pti)
 {
 	int i;
@@ -339,6 +386,8 @@ static int __devinit tango_pti_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, pti);
 	tango_pti = pti;
+	if (!proc_create_data("tango_pti", 0444, NULL, &tango_pti_proc_fops, pti))
+		dev_warn(&pdev->dev, "cannot create /proc/tango_pti\n");
 	dev_info(&pdev->dev, "%d live inputs\n", pdata->num_inputs);
 	return 0;
 
@@ -365,6 +414,7 @@ static int __devexit tango_pti_remove(struct platform_device *pdev)
 	struct tango_pti *pti = platform_get_drvdata(pdev);
 	int i;
 
+	remove_proc_entry("tango_pti", NULL);
 	kthread_stop(pti->thread);
 	mutex_lock(&pti->lock);
 	for (i = 0; i < pti->pdata->num_inputs; i++)

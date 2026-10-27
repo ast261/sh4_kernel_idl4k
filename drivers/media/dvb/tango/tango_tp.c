@@ -229,6 +229,7 @@ int tango_tp_boot(struct tango_pti *pti)
 	*(u32 *)&ver[0] = IF_READ(pti, Version);
 	*(u32 *)&ver[4] = readl(pti->tp + IF_OFF(Version) + 4);
 	ver[8] = 0;
+	strcpy(pti->fw_version, ver);
 	/* TE checks the version string; the interface checksum is what matters
 	 * for the shared-memory layout (the 7108 images say 01022400) */
 	if (IF_READ(pti, CheckSum) != SHARED_MEMORY_INTERFACE_CHECKSUM || strncmp(ver, "0102", 4)) {
@@ -406,4 +407,32 @@ int tango_tp_live(struct tango_pti_input *in, int start)
 	TP_WRITE(pti->live->packet_len, start ? STFE_DMA_PKT_LEN : 0);
 	return tp_post(pti, start ? stptiTP_H2TP_MAILBOX0_START_LIVE_MASK :
 		       stptiTP_H2TP_MAILBOX0_STOP_LIVE_MASK, 100);
+}
+
+void tango_tp_show(struct tango_pti *pti, struct seq_file *m)
+{
+	seq_printf(m, "TP firmware %s, activity %u, sync errors %u\n", pti->fw_version,
+		   IF_READ(pti, ActivityCounter), TP_READ(pti->pdev_info->PacketsWithSyncError));
+}
+
+/* The vDevice and slot counters restart with every start of the input */
+void tango_tp_input_show(struct tango_pti_input *in, struct seq_file *m)
+{
+	struct tango_pti *pti = in->pti;
+	volatile stptiTP_vDeviceInfo_t *v = &pti->vdev_info[in->index];
+	int base = in->index * INPUT_SLOTS;
+	int k;
+
+	seq_printf(m, "  TP: in %u, no PID match %u, sync errors %u, TEI %u, CC errors %u, buffer overflows %u\n",
+		   TP_READ(v->input_packet_count), TP_READ(v->pid_mismatch_count),
+		   TP_READ(v->transport_sync_error_count), TP_READ(v->transport_error_count),
+		   TP_READ(v->cc_error_count), TP_READ(v->buffer_overflow_count));
+	seq_printf(m, "  PIDs:");
+	for (k = 0; k < INPUT_PIDS; k++)
+		if (in->users[k])
+			seq_printf(m, " %u:%u", in->pid[k],
+				   TP_READ(pti->slot_info[base + k].packet_count));
+	if (in->all_users)
+		seq_printf(m, " all:%u", TP_READ(pti->slot_info[base + INPUT_PIDS].packet_count));
+	seq_printf(m, "\n");
 }

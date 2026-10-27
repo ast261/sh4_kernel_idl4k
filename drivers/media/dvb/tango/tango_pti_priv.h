@@ -13,6 +13,7 @@
 #include <linux/mutex.h>
 #include <linux/completion.h>
 #include <linux/irqreturn.h>
+#include <linux/seq_file.h>
 #include <media/tango_pti.h>
 
 #include "pti_tp_api.h"
@@ -61,6 +62,15 @@ struct tango_pti_input {
 	int all_users;			/* references on TANGO_PTI_ALL_PIDS */
 
 	unsigned long packets;
+	u32 max_fill;			/* most packets seen waiting in buf */
+
+	/* STFE IB status, summed by the data thread (it clears on read) */
+	int lock;
+	unsigned long fifo_overflows;
+	unsigned long buffer_overflows;
+	unsigned long pkt_overflows;
+	unsigned long error_pkts;
+	unsigned long short_pkts;
 };
 
 struct tango_pti {
@@ -76,6 +86,7 @@ struct tango_pti {
 	struct mutex lock;		/* configuration, mailbox, data thread */
 	struct completion ack;
 	struct task_struct *thread;
+	char fw_version[9];
 
 	/* TP shared memory (host addresses inside the TP mapping) */
 	volatile stptiTP_Live_t *live;
@@ -118,10 +129,13 @@ int tango_tp_live(struct tango_pti_input *in, int start);
 void tango_tp_set_pid(struct tango_pti_input *in, int k, u16 pid);
 void tango_tp_set_all(struct tango_pti_input *in, int on);
 void tango_tp_slot_sync(struct tango_pti *pti);
+void tango_tp_show(struct tango_pti *pti, struct seq_file *m);
+void tango_tp_input_show(struct tango_pti_input *in, struct seq_file *m);
 
 /* tango_stfe.c */
 void tango_stfe_init(struct tango_pti *pti);
 void tango_stfe_input_configure(struct tango_pti_input *in);
 void tango_stfe_input_enable(struct tango_pti_input *in, int on);
+void tango_stfe_input_status(struct tango_pti_input *in);
 
 #endif
