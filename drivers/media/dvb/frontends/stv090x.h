@@ -70,7 +70,15 @@ struct stv090x_config {
 	u8 ts1_tei : 1;
 	u8 ts2_tei : 1;
 
+	/* STV0900 with two serial streams: TSGENERAL 0x00 instead of 0x0c
+	 * (the serial streams leave on the TS1 and TS2 ports) */
+	u8 ts_serial_ts1_ts2 : 1;
+
 	enum stv090x_i2crpt	repeater_level;
+
+	/* both demodulator paths reach the tuner(s) through the I2C
+	 * repeater of path 1 */
+	u8 tuner_on_rpt1 : 1;
 
 	u8			tuner_bbgain; /* default: 10db */
 	enum stv090x_adc_range	adc1_range; /* default: 2Vpp */

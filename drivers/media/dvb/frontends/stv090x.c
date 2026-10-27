@@ -750,6 +750,8 @@ static int stv090x_write_reg(struct stv090x_state *state, unsigned int reg, u8 d
 
 static int stv090x_i2c_gate_ctrl(struct stv090x_state *state, int enable)
 {
+	unsigned int rpt = state->config->tuner_on_rpt1 ? STV090x_P1_I2CRPT :
+			   STV090x_Px_I2CRPT(state->demod);
 	u32 reg;
 
 	/*
@@ -768,17 +770,17 @@ static int stv090x_i2c_gate_ctrl(struct stv090x_state *state, int enable)
 			mutex_lock(&state->internal->tuner_lock);
 	}
 
-	reg = STV090x_READ_DEMOD(state, I2CRPT);
+	reg = stv090x_read_reg(state, rpt);
 	if (enable) {
 		dprintk(FE_DEBUG, 1, "Enable Gate");
 		STV090x_SETFIELD_Px(reg, I2CT_ON_FIELD, 1);
-		if (STV090x_WRITE_DEMOD(state, I2CRPT, reg) < 0)
+		if (stv090x_write_reg(state, rpt, reg) < 0)
 			goto err;
 
 	} else {
 		dprintk(FE_DEBUG, 1, "Disable Gate");
 		STV090x_SETFIELD_Px(reg, I2CT_ON_FIELD, 0);
-		if ((STV090x_WRITE_DEMOD(state, I2CRPT, reg)) < 0)
+		if (stv090x_write_reg(state, rpt, reg) < 0)
 			goto err;
 	}
 
@@ -4339,7 +4341,8 @@ static int stv0900_set_tspath(struct stv090x_state *state)
 			case STV090x_TSMODE_SERIAL_PUNCTURED:
 			case STV090x_TSMODE_SERIAL_CONTINUOUS:
 			default:
-				if (stv090x_write_reg(state, STV090x_TSGENERAL, 0x0c) < 0)
+				if (stv090x_write_reg(state, STV090x_TSGENERAL,
+						      state->config->ts_serial_ts1_ts2 ? 0x00 : 0x0c) < 0)
 					goto err;
 				break;
 
