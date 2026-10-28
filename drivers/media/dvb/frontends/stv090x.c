@@ -3651,9 +3651,9 @@ static int stv090x_table_lookup(const struct stv090x_tab *tab, int max, int val)
 	return res;
 }
 
-static int stv090x_read_signal_strength(struct dvb_frontend *fe, u16 *strength)
+/* Input power in dBm, -100 .. 0 */
+static s32 stv090x_get_str(struct stv090x_state *state)
 {
-	struct stv090x_state *state = fe->demodulator_priv;
 	u32 reg;
 	s32 agc_0, agc_1, agc;
 	s32 str;
@@ -3670,68 +3670,134 @@ static int stv090x_read_signal_strength(struct dvb_frontend *fe, u16 *strength)
 		str = 0;
 	else if (agc < stv090x_rf_tab[ARRAY_SIZE(stv090x_rf_tab) - 1].read)
 		str = -100;
-	*strength = (str + 100) * 0xFFFF / 100;
+
+	return str;
+}
+
+static int stv090x_read_signal_strength(struct dvb_frontend *fe, u16 *strength)
+{
+	struct stv090x_state *state = fe->demodulator_priv;
+
+	*strength = (stv090x_get_str(state) + 100) * 0xFFFF / 100;
 
 	return 0;
 }
 
-static int stv090x_read_cnr(struct dvb_frontend *fe, u16 *cnr)
+/* C/N in 0.1 dB from the cn tables; -1 if the demod has no lock */
+static int stv090x_get_cn(struct stv090x_state *state, s32 *cn)
 {
-	struct stv090x_state *state = fe->demodulator_priv;
 	u32 reg_0, reg_1, reg, i;
 	s32 val_0, val_1, val = 0;
 	u8 lock_f;
-	s32 div;
-	u32 last;
 
 	switch (state->delsys) {
 	case STV090x_DVBS2:
 		reg = STV090x_READ_DEMOD(state, DSTATUS);
 		lock_f = STV090x_GETFIELD_Px(reg, LOCK_DEFINITIF_FIELD);
-		if (lock_f) {
-			msleep(5);
-			for (i = 0; i < 16; i++) {
-				reg_1 = STV090x_READ_DEMOD(state, NNOSPLHT1);
-				val_1 = STV090x_GETFIELD_Px(reg_1, NOSPLHT_NORMED_FIELD);
-				reg_0 = STV090x_READ_DEMOD(state, NNOSPLHT0);
-				val_0 = STV090x_GETFIELD_Px(reg_0, NOSPLHT_NORMED_FIELD);
-				val  += MAKEWORD16(val_1, val_0);
-				msleep(1);
-			}
-			val /= 16;
-			last = ARRAY_SIZE(stv090x_s2cn_tab) - 1;
-			div = stv090x_s2cn_tab[last].real -
-			      stv090x_s2cn_tab[3].real;
-			val = stv090x_table_lookup(stv090x_s2cn_tab, last, val);
-			if (val < 0)
-				val = 0;
-			*cnr = val * 0xFFFF / div;
+		if (!lock_f)
+			return -1;
+		msleep(5);
+		for (i = 0; i < 16; i++) {
+			reg_1 = STV090x_READ_DEMOD(state, NNOSPLHT1);
+			val_1 = STV090x_GETFIELD_Px(reg_1, NOSPLHT_NORMED_FIELD);
+			reg_0 = STV090x_READ_DEMOD(state, NNOSPLHT0);
+			val_0 = STV090x_GETFIELD_Px(reg_0, NOSPLHT_NORMED_FIELD);
+			val  += MAKEWORD16(val_1, val_0);
+			msleep(1);
 		}
-		break;
+		val /= 16;
+		*cn = stv090x_table_lookup(stv090x_s2cn_tab,
+			ARRAY_SIZE(stv090x_s2cn_tab) - 1, val);
+		return 0;
 
 	case STV090x_DVBS1:
 	case STV090x_DSS:
 		reg = STV090x_READ_DEMOD(state, DSTATUS);
 		lock_f = STV090x_GETFIELD_Px(reg, LOCK_DEFINITIF_FIELD);
-		if (lock_f) {
-			msleep(5);
-			for (i = 0; i < 16; i++) {
-				reg_1 = STV090x_READ_DEMOD(state, NOSDATAT1);
-				val_1 = STV090x_GETFIELD_Px(reg_1, NOSDATAT_UNNORMED_FIELD);
-				reg_0 = STV090x_READ_DEMOD(state, NOSDATAT0);
-				val_0 = STV090x_GETFIELD_Px(reg_0, NOSDATAT_UNNORMED_FIELD);
-				val  += MAKEWORD16(val_1, val_0);
-				msleep(1);
-			}
-			val /= 16;
-			last = ARRAY_SIZE(stv090x_s1cn_tab) - 1;
-			div = stv090x_s1cn_tab[last].real -
-			      stv090x_s1cn_tab[0].real;
-			val = stv090x_table_lookup(stv090x_s1cn_tab, last, val);
-			*cnr = val * 0xFFFF / div;
+		if (!lock_f)
+			return -1;
+		msleep(5);
+		for (i = 0; i < 16; i++) {
+			reg_1 = STV090x_READ_DEMOD(state, NOSDATAT1);
+			val_1 = STV090x_GETFIELD_Px(reg_1, NOSDATAT_UNNORMED_FIELD);
+			reg_0 = STV090x_READ_DEMOD(state, NOSDATAT0);
+			val_0 = STV090x_GETFIELD_Px(reg_0, NOSDATAT_UNNORMED_FIELD);
+			val  += MAKEWORD16(val_1, val_0);
+			msleep(1);
+		}
+		val /= 16;
+		*cn = stv090x_table_lookup(stv090x_s1cn_tab,
+			ARRAY_SIZE(stv090x_s1cn_tab) - 1, val);
+		return 0;
+
+	default:
+		return -1;
+	}
+}
+
+static int stv090x_read_cnr(struct dvb_frontend *fe, u16 *cnr)
+{
+	struct stv090x_state *state = fe->demodulator_priv;
+	s32 val, div;
+	u32 last;
+
+	if (stv090x_get_cn(state, &val) < 0)
+		return 0;
+
+	if (state->delsys == STV090x_DVBS2) {
+		last = ARRAY_SIZE(stv090x_s2cn_tab) - 1;
+		div = stv090x_s2cn_tab[last].real -
+		      stv090x_s2cn_tab[3].real;
+		if (val < 0)
+			val = 0;
+	} else {
+		last = ARRAY_SIZE(stv090x_s1cn_tab) - 1;
+		div = stv090x_s1cn_tab[last].real -
+		      stv090x_s1cn_tab[0].real;
+	}
+	*cnr = val * 0xFFFF / div;
+
+	return 0;
+}
+
+/*
+ * DTV_STAT_* are read on demand: the cn read takes ~25 ms of i2c, too much
+ * for every read_status of the frontend thread.  The block error count is
+ * what FE_READ_BER returns, i.e. the errors since the previous read.
+ */
+static int stv090x_get_property(struct dvb_frontend *fe,
+				struct dtv_property *tvp)
+{
+	struct stv090x_state *state = fe->demodulator_priv;
+	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
+	enum fe_status status;
+	s32 cn;
+	u32 per;
+
+	switch (tvp->cmd) {
+	case DTV_STAT_SIGNAL_STRENGTH:
+		c->strength.len = 1;
+		c->strength.stat[0].scale = FE_SCALE_DECIBEL;
+		c->strength.stat[0].svalue = stv090x_get_str(state) * 1000;
+		break;
+	case DTV_STAT_CNR:
+		c->cnr.len = 1;
+		if (stv090x_get_cn(state, &cn) < 0) {
+			c->cnr.stat[0].scale = FE_SCALE_NOT_AVAILABLE;
+		} else {
+			c->cnr.stat[0].scale = FE_SCALE_DECIBEL;
+			c->cnr.stat[0].svalue = cn * 100;
 		}
 		break;
-	default:
+	case DTV_STAT_ERROR_BLOCK_COUNT:
+		c->block_error.len = 1;
+		stv090x_read_status(fe, &status);
+		if (!(status & FE_HAS_LOCK) || stv090x_read_per(fe, &per) < 0) {
+			c->block_error.stat[0].scale = FE_SCALE_NOT_AVAILABLE;
+		} else {
+			c->block_error.stat[0].scale = FE_SCALE_COUNTER;
+			c->block_error.stat[0].uvalue = per;
+		}
 		break;
 	}
 
@@ -4990,6 +5056,8 @@ static const struct dvb_frontend_ops stv090x_ops = {
 	.read_ber			= stv090x_read_per,
 	.read_signal_strength		= stv090x_read_signal_strength,
 	.read_snr			= stv090x_read_cnr,
+
+	.get_property			= stv090x_get_property,
 };
 
 struct dvb_frontend *stv090x_attach(struct stv090x_config *config,
