@@ -364,6 +364,16 @@ struct dvb_frontend_event {
 #define DTV_INTERLEAVING			60
 #define DTV_LNA					61
 
+/* Quality parameters */
+#define DTV_STAT_SIGNAL_STRENGTH		62
+#define DTV_STAT_CNR				63
+#define DTV_STAT_PRE_ERROR_BIT_COUNT		64
+#define DTV_STAT_PRE_TOTAL_BIT_COUNT		65
+#define DTV_STAT_POST_ERROR_BIT_COUNT		66
+#define DTV_STAT_POST_TOTAL_BIT_COUNT		67
+#define DTV_STAT_ERROR_BLOCK_COUNT		68
+#define DTV_STAT_TOTAL_BLOCK_COUNT		69
+
 /* Physical layer scrambling (DVB-S2 PLS), number as in mainline */
 #define DTV_SCRAMBLING_SEQUENCE_INDEX		70
 
@@ -454,11 +464,42 @@ struct dtv_cmds_h {
 	__u32	reserved:30;	/* Align */
 };
 
+/**
+ * Scale of a quality parameter:
+ * FE_SCALE_NOT_AVAILABLE - the measure is not available (now or at all)
+ * FE_SCALE_DECIBEL - svalue in 0.001 dB steps
+ * FE_SCALE_RELATIVE - uvalue from 0 (0%) to 0xffff (100%)
+ * FE_SCALE_COUNTER - uvalue counts events (bit errors, blocks, ...)
+ */
+enum fecap_scale_params {
+	FE_SCALE_NOT_AVAILABLE = 0,
+	FE_SCALE_DECIBEL,
+	FE_SCALE_RELATIVE,
+	FE_SCALE_COUNTER
+};
+
+struct dtv_stats {
+	__u8 scale;	/* enum fecap_scale_params type */
+	union {
+		__u64 uvalue;	/* for counters and relative scales */
+		__s64 svalue;	/* for 0.001 dB measures */
+	};
+} __attribute__ ((packed));
+
+#define MAX_DTV_STATS   4
+
+/* stat[0] is the global value; len = 0 means no statistics */
+struct dtv_fe_stats {
+	__u8 len;
+	struct dtv_stats stat[MAX_DTV_STATS];
+} __attribute__ ((packed));
+
 struct dtv_property {
 	__u32 cmd;
 	__u32 reserved[3];
 	union {
 		__u32 data;
+		struct dtv_fe_stats st;
 		struct {
 			__u8 data[32];
 			__u32 len;

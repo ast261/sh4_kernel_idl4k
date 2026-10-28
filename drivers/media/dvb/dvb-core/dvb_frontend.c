@@ -855,8 +855,9 @@ static int dvb_frontend_clear_cache(struct dvb_frontend *fe)
 {
 	int i;
 
+	/* The statistics belong to the driver, keep them */
 	memset(&(fe->dtv_property_cache), 0,
-			sizeof(struct dtv_frontend_properties));
+			offsetof(struct dtv_frontend_properties, strength));
 
 	fe->dtv_property_cache.state = DTV_CLEAR;
 	fe->dtv_property_cache.delivery_system = SYS_UNDEFINED;
@@ -1066,6 +1067,15 @@ static struct dtv_cmds_h dtv_cmds[DTV_MAX_COMMAND + 1] = {
 	_DTV_CMD(DTV_SCRAMBLING_SEQUENCE_INDEX, 1, 0),
 
 	/* Get */
+	_DTV_CMD(DTV_STAT_SIGNAL_STRENGTH, 0, 0),
+	_DTV_CMD(DTV_STAT_CNR, 0, 0),
+	_DTV_CMD(DTV_STAT_PRE_ERROR_BIT_COUNT, 0, 0),
+	_DTV_CMD(DTV_STAT_PRE_TOTAL_BIT_COUNT, 0, 0),
+	_DTV_CMD(DTV_STAT_POST_ERROR_BIT_COUNT, 0, 0),
+	_DTV_CMD(DTV_STAT_POST_TOTAL_BIT_COUNT, 0, 0),
+	_DTV_CMD(DTV_STAT_ERROR_BLOCK_COUNT, 0, 0),
+	_DTV_CMD(DTV_STAT_TOTAL_BLOCK_COUNT, 0, 0),
+
 	[DTV_DISEQC_SLAVE_REPLY] = {
 		.name	= "DTV_DISEQC_SLAVE_REPLY",
 		.cmd	= DTV_DISEQC_SLAVE_REPLY,
@@ -1577,6 +1587,32 @@ static int dtv_property_process_get(struct dvb_frontend *fe,
 	/* Physical layer scrambling */
 	case DTV_SCRAMBLING_SEQUENCE_INDEX:
 		tvp->u.data = fe->dtv_property_cache.scrambling_sequence_index;
+		break;
+
+	/* Quality measures, filled in by the driver */
+	case DTV_STAT_SIGNAL_STRENGTH:
+		tvp->u.st = fe->dtv_property_cache.strength;
+		break;
+	case DTV_STAT_CNR:
+		tvp->u.st = fe->dtv_property_cache.cnr;
+		break;
+	case DTV_STAT_PRE_ERROR_BIT_COUNT:
+		tvp->u.st = fe->dtv_property_cache.pre_bit_error;
+		break;
+	case DTV_STAT_PRE_TOTAL_BIT_COUNT:
+		tvp->u.st = fe->dtv_property_cache.pre_bit_count;
+		break;
+	case DTV_STAT_POST_ERROR_BIT_COUNT:
+		tvp->u.st = fe->dtv_property_cache.post_bit_error;
+		break;
+	case DTV_STAT_POST_TOTAL_BIT_COUNT:
+		tvp->u.st = fe->dtv_property_cache.post_bit_count;
+		break;
+	case DTV_STAT_ERROR_BLOCK_COUNT:
+		tvp->u.st = fe->dtv_property_cache.block_error;
+		break;
+	case DTV_STAT_TOTAL_BLOCK_COUNT:
+		tvp->u.st = fe->dtv_property_cache.block_count;
 		break;
 
 	default:

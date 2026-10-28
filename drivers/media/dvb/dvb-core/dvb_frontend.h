@@ -387,6 +387,16 @@ struct dtv_frontend_properties {
 
 	/* Physical layer scrambling specifics */
 	u32			scrambling_sequence_index;
+
+	/* Quality statistics, kept by DTV_CLEAR; must stay last */
+	struct dtv_fe_stats	strength;
+	struct dtv_fe_stats	cnr;
+	struct dtv_fe_stats	pre_bit_error;
+	struct dtv_fe_stats	pre_bit_count;
+	struct dtv_fe_stats	post_bit_error;
+	struct dtv_fe_stats	post_bit_count;
+	struct dtv_fe_stats	block_error;
+	struct dtv_fe_stats	block_count;
 };
 
 struct dvb_frontend {
