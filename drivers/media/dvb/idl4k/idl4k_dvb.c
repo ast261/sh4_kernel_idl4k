@@ -281,6 +281,12 @@ static int idl4k_frontend_attach(struct idl4k_adapter *a)
 	a->fe->ops.diseqc_send_master_cmd = idl4k_send_master_cmd;
 	a->fe->ops.diseqc_send_burst = idl4k_send_burst;
 
+	/* demodulator path and tuner run from reset until the first open;
+	 * put both into standby like the original axe_fe does at load */
+	if (a->fe->ops.sleep(a->fe) < 0)
+		printk(KERN_WARNING "idl4k_dvb: frontend %d standby failed\n",
+		       a->index);
+
 	if (dvb_register_frontend(&a->adapter, a->fe) < 0)
 		goto err;
 	return 0;
