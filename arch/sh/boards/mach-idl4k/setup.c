@@ -222,7 +222,8 @@ static struct i2c_board_info idl4k_i2c_devices[] = {
  * Front panel.  The LEDs and the reset button are claimed only when the
  * leds-gpio and gpio-keys modules are loaded.  The power LEDs are driven
  * by the standby code below as well; it uses gpio_set_value() only, so it
- * works whether or not leds-gpio owns the pins.
+ * works whether or not leds-gpio owns the pins.  The tuner LEDs follow the
+ * LED triggers of the idl4k_dvb frontends.
  */
 static struct gpio_led idl4k_leds[] = {
 	{
@@ -241,15 +242,19 @@ static struct gpio_led idl4k_leds[] = {
 	}, {
 		.name = "tuner1",
 		.gpio = stm_gpio(3, 3),
+		.default_trigger = "idl4k-fe0",
 	}, {
 		.name = "tuner2",
 		.gpio = stm_gpio(3, 4),
+		.default_trigger = "idl4k-fe1",
 	}, {
 		.name = "tuner3",
 		.gpio = stm_gpio(3, 5),
+		.default_trigger = "idl4k-fe2",
 	}, {
 		.name = "tuner4",
 		.gpio = stm_gpio(3, 6),
+		.default_trigger = "idl4k-fe3",
 	},
 };
 
