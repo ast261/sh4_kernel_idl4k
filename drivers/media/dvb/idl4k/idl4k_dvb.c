@@ -20,6 +20,10 @@
  * processor (tango-pti) and gets the filtered packets back into the
  * software demux.
  *
+ * Each frontend has an LED trigger, idl4k-fe0 .. idl4k-fe3, that is on
+ * while the frontend is open for writing; the board makes it the default
+ * trigger of the front panel tuner LED.
+ *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2.
  */
@@ -31,6 +35,7 @@
 #include <linux/delay.h>
 #include <linux/gpio.h>
 #include <linux/i2c.h>
+#include <linux/leds.h>
 #include <linux/mutex.h>
 #include <linux/stm/gpio.h>
 #include <media/tango_pti.h>
@@ -71,6 +76,8 @@ struct idl4k_adapter {
 	struct stv090x_config demod_config;
 	struct stv6120_config tuner_config;
 	struct dvb_frontend *fe;
+	char led_name[12];
+	struct led_trigger *led;
 
 	/* LNB supply of this frontend's RF input, and the voltage and tone
 	 * this frontend has set on it */
@@ -181,14 +188,16 @@ static int idl4k_set_tone(struct dvb_frontend *fe, fe_sec_tone_mode_t tone)
 	return ret;
 }
 
-/* Last close of the frontend: it no longer uses the LNB.  dvb-core only
- * switches the supply off when the frontend thread exits, which can be a
- * minute later, and the other frontends on the input would get -EBUSY
- * until then.  The supply itself stays as it is until that point. */
+/* First open / last close of the frontend for writing: switch its LED.
+ * After the last close it no longer uses the LNB.  dvb-core only switches
+ * the supply off when the frontend thread exits, which can be a minute
+ * later, and the other frontends on the input would get -EBUSY until then.
+ * The supply itself stays as it is until that point. */
 static int idl4k_ts_bus_ctrl(struct dvb_frontend *fe, int acquire)
 {
 	struct idl4k_adapter *a = fe->dvb->priv;
 
+	led_trigger_event(a->led, acquire ? LED_FULL : LED_OFF);
 	if (!acquire) {
 		mutex_lock(&idl4k_lnb_lock);
 		a->voltage = SEC_VOLTAGE_OFF;
@@ -311,6 +320,8 @@ static void idl4k_adapter_remove(struct idl4k_adapter *a)
 	dvb_dmx_release(&a->demux);
 	tango_pti_input_put(a->input);
 	dvb_unregister_adapter(&a->adapter);
+	led_trigger_event(a->led, LED_OFF);
+	led_trigger_unregister_simple(a->led);
 	kfree(a);
 }
 
@@ -326,10 +337,12 @@ static struct idl4k_adapter *idl4k_adapter_add(int n)
 	a->index = n;
 	a->voltage = SEC_VOLTAGE_OFF;
 	a->tone = SEC_TONE_OFF;
+	snprintf(a->led_name, sizeof(a->led_name), "idl4k-fe%d", n);
+	led_trigger_register_simple(a->led_name, &a->led);
 
 	err = dvb_register_adapter(&a->adapter, "IDL4K", THIS_MODULE, NULL, adapter_nr);
 	if (err < 0)
-		goto err_free;
+		goto err_led;
 	a->adapter.priv = a;
 
 	a->input = tango_pti_input_get(n, idl4k_data, a);
@@ -385,7 +398,8 @@ err_input:
 	tango_pti_input_put(a->input);
 err_adapter:
 	dvb_unregister_adapter(&a->adapter);
-err_free:
+err_led:
+	led_trigger_unregister_simple(a->led);
 	kfree(a);
 	return ERR_PTR(err);
 }
