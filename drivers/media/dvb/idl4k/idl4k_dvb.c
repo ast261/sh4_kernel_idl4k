@@ -21,8 +21,9 @@
  * software demux.
  *
  * Each frontend has an LED trigger, idl4k-fe0 .. idl4k-fe3, that is on
- * while the frontend is open for writing; the board makes it the default
- * trigger of the front panel tuner LED.
+ * from the first tune of the frontend until its last close for writing;
+ * the board makes it the default trigger of the front panel tuner LED.
+ * Not from the open: minisatip opens all frontends at startup.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2.
@@ -78,6 +79,8 @@ struct idl4k_adapter {
 	struct dvb_frontend *fe;
 	char led_name[12];
 	struct led_trigger *led;
+	enum dvbfe_search (*search)(struct dvb_frontend *fe,
+				    struct dvb_frontend_parameters *p);
 
 	/* LNB supply of this frontend's RF input, and the voltage and tone
 	 * this frontend has set on it */
@@ -188,22 +191,32 @@ static int idl4k_set_tone(struct dvb_frontend *fe, fe_sec_tone_mode_t tone)
 	return ret;
 }
 
-/* First open / last close of the frontend for writing: switch its LED.
- * After the last close it no longer uses the LNB.  dvb-core only switches
- * the supply off when the frontend thread exits, which can be a minute
- * later, and the other frontends on the input would get -EBUSY until then.
- * The supply itself stays as it is until that point. */
+/* Last close of the frontend: it no longer uses the LNB and its LED goes
+ * off.  dvb-core only switches the supply off when the frontend thread
+ * exits, which can be a minute later, and the other frontends on the input
+ * would get -EBUSY until then.  The supply itself stays as it is until
+ * that point. */
 static int idl4k_ts_bus_ctrl(struct dvb_frontend *fe, int acquire)
 {
 	struct idl4k_adapter *a = fe->dvb->priv;
 
-	led_trigger_event(a->led, acquire ? LED_FULL : LED_OFF);
 	if (!acquire) {
+		led_trigger_event(a->led, LED_OFF);
 		mutex_lock(&idl4k_lnb_lock);
 		a->voltage = SEC_VOLTAGE_OFF;
 		mutex_unlock(&idl4k_lnb_lock);
 	}
 	return 0;
+}
+
+/* tuning switches the LED on; dvb-core calls this again while it searches */
+static enum dvbfe_search idl4k_search(struct dvb_frontend *fe,
+				      struct dvb_frontend_parameters *p)
+{
+	struct idl4k_adapter *a = fe->dvb->priv;
+
+	led_trigger_event(a->led, LED_FULL);
+	return a->search(fe, p);
 }
 
 /* DiSEqC while another frontend uses the LNB is dropped */
@@ -284,11 +297,13 @@ static int idl4k_frontend_attach(struct idl4k_adapter *a)
 	a->set_tone = a->fe->ops.set_tone;
 	a->send_master_cmd = a->fe->ops.diseqc_send_master_cmd;
 	a->send_burst = a->fe->ops.diseqc_send_burst;
+	a->search = a->fe->ops.search;
 	a->fe->ops.set_voltage = idl4k_set_voltage;
 	a->fe->ops.ts_bus_ctrl = idl4k_ts_bus_ctrl;
 	a->fe->ops.set_tone = idl4k_set_tone;
 	a->fe->ops.diseqc_send_master_cmd = idl4k_send_master_cmd;
 	a->fe->ops.diseqc_send_burst = idl4k_send_burst;
+	a->fe->ops.search = idl4k_search;
 
 	/* demodulator path and tuner run from reset until the first open;
 	 * put both into standby like the original axe_fe does at load */
