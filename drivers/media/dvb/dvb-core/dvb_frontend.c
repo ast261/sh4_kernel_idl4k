@@ -610,6 +610,9 @@ restart:
 			case DVBFE_ALGO_CUSTOM:
 				params = NULL; /* have we been asked to RETUNE ?	*/
 				dprintk("%s: Frontend ALGO = DVBFE_ALGO_CUSTOM, state=%d\n", __func__, fepriv->state);
+				/* no tuning parameters supplied yet: nothing to search for */
+				if (fepriv->state & FESTATE_IDLE)
+					break;
 				if (fepriv->state & FESTATE_RETUNE) {
 					dprintk("%s: Retune requested, FESTAT_RETUNE\n", __func__);
 					params = &fepriv->parameters;
