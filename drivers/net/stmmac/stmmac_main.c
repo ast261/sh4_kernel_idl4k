@@ -136,6 +136,13 @@ module_param(eee_timer, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(eee_timer, "LPI tx expiration time in msec");
 #define STMMAC_LPI_TIMER(x) (jiffies + msecs_to_jiffies(x))
 
+/* Enable this option the driver could use the WoL+ feature
+ * available in some new PHY drivers. This allows to completely power-off
+ * the mac when suspend and the WoL will be done by the PHY device directly. */
+static int wol_plus_en;
+module_param(wol_plus_en, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(wol_plus_en, "Driver can use the WoL+ feature");
+
 static irqreturn_t stmmac_interrupt(int irq, void *dev_id);
 static netdev_tx_t stmmac_xmit(struct sk_buff *skb, struct net_device *dev);
 #ifdef CONFIG_STMMAC_DEBUG_FS
@@ -424,6 +431,10 @@ static int stmmac_init_phy(struct net_device *dev)
 
 	priv->phydev = phydev;
 
+	if ((priv->phydev->drv->wol_supported) && (wol_plus_en)) {
+		pr_info("stmmac: attached PHY supports WoL Plus\n");
+		priv->phy_wol_plus = priv->phydev->drv->wol_supported;
+	}
 	return 0;
 }
 
@@ -767,14 +778,16 @@ static int stmmac_has_work(struct stmmac_priv *priv)
 	unsigned int has_work = 0;
 	int rxret, tx_work = 0;
 
-	rxret = priv->hw->desc->get_rx_owner(priv->dma_rx +
-		(priv->cur_rx % priv->dma_rx_size));
+	if (likely(priv->dma_rx)) {
+		rxret = priv->hw->desc->get_rx_owner(priv->dma_rx +
+			(priv->cur_rx % priv->dma_rx_size));
 
-	if (priv->dirty_tx != priv->cur_tx)
-		tx_work = 1;
+		if (priv->dirty_tx != priv->cur_tx)
+			tx_work = 1;
 
-	if (likely(!rxret || tx_work))
-		has_work = 1;
+		if (likely(!rxret || tx_work))
+			has_work = 1;
+	}
 
 	return has_work;
 }
@@ -990,12 +1003,6 @@ static int stmmac_open(struct net_device *dev)
 	stmmac_check_ether_addr(priv);
 
 	/* MDIO bus Registration */
-	ret = stmmac_mdio_register(dev);
-	if (ret < 0) {
-		pr_debug("%s: MDIO bus (id: %d) registration failed",
-			 __func__, priv->plat->bus_id);
-		return ret;
-	}
 
 #ifdef CONFIG_STMMAC_TIMER
 	priv->tm = kzalloc(sizeof(struct stmmac_timer *), GFP_KERNEL);
@@ -1191,8 +1198,6 @@ static int stmmac_release(struct net_device *dev)
 #ifdef CONFIG_STMMAC_DEBUG_FS
 	stmmac_exit_fs();
 #endif
-	stmmac_mdio_unregister(dev);
-
 	return 0;
 }
 
@@ -2054,15 +2059,23 @@ struct stmmac_priv *stmmac_dvr_probe(struct device *device,
 	ret = register_netdev(ndev);
 	if (ret) {
 		pr_err("%s: ERROR %i registering the device\n", __func__, ret);
-		goto error;
+		goto netdev_error;
+	}
+
+	ret = stmmac_mdio_register(ndev);
+	if (ret < 0) {
+		pr_err("%s: MDIO bus (id: %d) registration failed",
+			__func__, priv->plat->bus_id);
+		goto exit_error;
 	}
 
 	return priv;
 
-error:
+exit_error:
+	unregister_netdev(ndev);
+netdev_error:
 	netif_napi_del(&priv->napi);
 
-	unregister_netdev(ndev);
 	free_netdev(ndev);
 
 	return NULL;
@@ -2086,6 +2099,7 @@ int stmmac_dvr_remove(struct net_device *ndev)
 
 	stmmac_set_mac(priv->ioaddr, false);
 	netif_carrier_off(ndev);
+	stmmac_mdio_unregister(ndev);
 	unregister_netdev(ndev);
 	free_netdev(ndev);
 
@@ -2124,8 +2138,13 @@ int stmmac_suspend(struct net_device *ndev)
 				     dis_ic);
 	priv->hw->desc->init_tx_desc(priv->dma_tx, priv->dma_tx_size);
 
-	/* Enable Power down mode by programming the PMT regs */
-	if (device_may_wakeup(priv->device))
+	/* If the wake-up On Lan can be done by the PHY device
+	 * (that supports WoL+) there is no reason to program the PMT
+	 * registers. This means that to enable Power down mode programming
+	 * the PMT regs either the phy doesn't support WoL+ or the PHY
+	 * supports that but not the WoL mode required by the user.
+	 */
+	if (device_may_wakeup(priv->device) && (!priv->phy_wol_plus))
 		priv->hw->mac->pmt(priv->ioaddr, priv->wolopts);
 	else
 		stmmac_set_mac(priv->ioaddr, false);
@@ -2143,12 +2162,12 @@ int stmmac_resume(struct net_device *ndev)
 
 	spin_lock(&priv->lock);
 
-	/* Power Down bit, into the PM register, is cleared
-	 * automatically as soon as a magic packet or a Wake-up frame
-	 * is received. Anyway, it's better to manually clear
-	 * this bit because it can generate problems while resuming
-	 * from another devices (e.g. serial console). */
-	if (device_may_wakeup(priv->device))
+	if (device_may_wakeup(priv->device) && (!priv->phy_wol_plus))
+		/* Power Down bit, into the PM register, is cleared
+		 * automatically as soon as a magic packet or a Wake-up frame
+		 * is received. Anyway, it's better to manually clear
+		 * this bit because it can generate problems while resuming
+		 * from another devices (e.g. serial console). */
 		priv->hw->mac->pmt(priv->ioaddr, 0);
 
 	netif_device_attach(ndev);
@@ -2231,6 +2250,10 @@ static int __init stmmac_cmdline_opt(char *str)
 				goto err;
 		} else if (!strncmp(opt, "pause:", 6)) {
 			if (strict_strtoul(opt + 6, 0, (unsigned long *)&pause))
+				goto err;
+		} else if (!strncmp(opt, "wol_plus_en:", 12)) {
+			if (strict_strtoul(opt + 12, 0,
+					   (unsigned long *)&wol_plus_en))
 				goto err;
 #ifdef CONFIG_STMMAC_TIMER
 		} else if (!strncmp(opt, "tmrate:", 7)) {

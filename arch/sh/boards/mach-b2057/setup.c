@@ -26,6 +26,7 @@
 #include <linux/stm/sysconf.h>
 #include <asm/irq-ilc.h>
 
+#define B2057_GPIO_FLASH_WP		stm_gpio(6, 2)
 #define B2057_GPIO_POWER_ON_ETH		stm_gpio(2, 5)
 #define B2057_MII1_TXER			stm_gpio(0, 4)
 #define B2057_POWER_ON			stm_gpio(3, 7)
@@ -147,32 +148,25 @@ static struct stm_plat_spifsm_data b2057_serial_flash =  {
 	},
 };
 
-/* NAND Flash */
+/*
+ * NAND Flash: Micron MT29F8G08ABABAWP
+ *  - Requires 4-bit ECC
+ *  - ONFI compliant: timing parameters retrieved during device probe
+ */
 static struct stm_nand_bank_data b2057_nand_flash = {
-	.csn		= 1,	/* Controlled by JF3 */
+	.csn		= 0,	/* Rev A/B : set JF3 2-3 (EMI_CS0 -> NAND_CS) */
 	.options	= NAND_NO_AUTOINCR | NAND_USE_FLASH_BBT,
 	.nr_partitions	= 2,
 	.partitions	= (struct mtd_partition []) {
 		{
 			.name	= "NAND Flash 1",
 			.offset	= 0,
-			.size	= 0x00800000
+			.size	= 0x04000000
 		}, {
 			.name	= "NAND Flash 2",
 			.offset = MTDPART_OFS_NXTBLK,
 			.size	= MTDPART_SIZ_FULL
 		},
-	},
-	.timing_data	=  &(struct stm_nand_timing_data) {
-		.sig_setup	= 50,		/* times in ns */
-		.sig_hold	= 50,
-		.CE_deassert	= 0,
-		.WE_to_RBn	= 100,
-		.wr_on		= 10,
-		.wr_off		= 40,
-		.rd_on		= 10,
-		.rd_off		= 40,
-		.chip_delay	= 30,		/* in us */
 	},
 };
 
@@ -296,11 +290,18 @@ static int __init device_init(void)
 			.emmc = 0,
 		});
 
+	/*
+	 * NAND MTD has no concept of write-protect, so permanently disable WP
+	 */
+	gpio_request(B2057_GPIO_FLASH_WP, "FLASH_WP");
+	gpio_direction_output(B2057_GPIO_FLASH_WP, 1);
+
 	stxh205_configure_nand(&(struct stm_nand_config) {
 			.driver = stm_nand_bch,
 			.nr_banks = 1,
 			.banks = &b2057_nand_flash,
-			.rbn.flex_connected = 1,});
+			.rbn.flex_connected = 1,
+			.bch_ecc_cfg = BCH_ECC_CFG_AUTO});
 
 	stxh205_configure_spifsm(&b2057_serial_flash);
 
@@ -330,13 +331,14 @@ struct sh_machine_vector mv_b2057 __initmv = {
 
 #include "../../kernel/cpu/sh4/stm_hom.h"
 
-static int b2057_board_freeze(void)
+static int b2057_board_freeze(struct stm_wakeup_devices *wkd)
 {
-	gpio_set_value(B2057_GPIO_POWER_ON_ETH, 0);
+	if (!wkd->stm_mac0_can_wakeup)
+		gpio_set_value(B2057_GPIO_POWER_ON_ETH, 0);
 	return 0;
 }
 
-static int b2057_board_defrost(void)
+static int b2057_board_defrost(struct stm_wakeup_devices *wkd)
 {
 	b2057_phy_reset(NULL);
 	return 0;

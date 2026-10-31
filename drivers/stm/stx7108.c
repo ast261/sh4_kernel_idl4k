@@ -254,6 +254,8 @@ void __init stx7108_configure_nand(struct stm_nand_config *config)
 		emiss_nandi_select(STM_NANDI_BCH);
 		stx7108_nand_bch_data.bank = config->banks;
 		stx7108_nand_bch_data.bch_ecc_cfg = config->bch_ecc_cfg;
+		stx7108_nand_bch_data.bch_bitflip_threshold =
+			config->bch_bitflip_threshold;
 		stx7108_nandi_device.dev.platform_data =
 			&stx7108_nand_bch_data;
 		stx7108_nandi_device.name = "stm-nand-bch";
@@ -920,7 +922,7 @@ void __init stx7108_configure_mmc(int emmc)
 
 static struct platform_device stx7108_sysconf_devices[] = {
 	{
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 0,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -941,7 +943,7 @@ static struct platform_device stx7108_sysconf_devices[] = {
 			},
 		}
 	}, {
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 1,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -962,7 +964,7 @@ static struct platform_device stx7108_sysconf_devices[] = {
 			},
 		}
 	}, {
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 2,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -983,7 +985,7 @@ static struct platform_device stx7108_sysconf_devices[] = {
 			},
 		}
 	}, {
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 3,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -1004,7 +1006,7 @@ static struct platform_device stx7108_sysconf_devices[] = {
 			},
 		}
 	}, {
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 4,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -1090,6 +1092,7 @@ static struct platform_device stx7108_temp_device = {
 	.name		   = "stm-temp",
 	.id		     = -1,
 	.dev.platform_data      = &(struct plat_stm_temp_data) {
+		.correction_factor = 20,
 		.dcorrect = { SYS_CFG_BANK1, 8, 4, 8 },
 		.overflow = { SYS_STA_BANK1, 7, 8, 8 },
 		.data = { SYS_STA_BANK1, 7, 10, 16 },

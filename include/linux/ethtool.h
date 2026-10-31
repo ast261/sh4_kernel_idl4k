@@ -33,7 +33,6 @@ struct ethtool_cmd {
 	__u8	eth_tp_mdix;
 	__u8	reserved2;
 	__u32	lp_advertising;	/* Features the link partner advertises */
-	__u32	eee;		/* Energy-Efficient Etehrnet */
 	__u32	reserved[2];
 };
 
@@ -668,6 +667,7 @@ struct ethtool_ops {
 #define WAKE_ARP		(1 << 4)
 #define WAKE_MAGIC		(1 << 5)
 #define WAKE_MAGICSECURE	(1 << 6) /* only meaningful if WAKE_MAGIC */
+#define WAKE_DOWN_SPEED		(1 << 7)
 
 /* L3-L4 network traffic flow types */
 #define	TCP_V4_FLOW	0x01

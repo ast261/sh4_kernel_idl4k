@@ -177,7 +177,7 @@ static struct platform_device stxh205_sysconf_devices[] = {
 	{
 		/* SBC system configuration bank 0 registers */
 		/* SYSCFG_BANK0 (aka SYSCFG_SBC, Sapphire): 0-42 */
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 0,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -196,7 +196,7 @@ static struct platform_device stxh205_sysconf_devices[] = {
 		}
 	}, {
 		/* SYSCFG_BANK1 (aka Coral): 100-176 */
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 1,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -215,7 +215,7 @@ static struct platform_device stxh205_sysconf_devices[] = {
 		}
 	}, {
 		/* SYSCFG_BANK2 (aka Perl): 200-243 */
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 2,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -234,7 +234,7 @@ static struct platform_device stxh205_sysconf_devices[] = {
 		}
 	}, {
 		/* SYSCFG_BANK3 (aka Opal): 400-510 */
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 3,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -253,7 +253,7 @@ static struct platform_device stxh205_sysconf_devices[] = {
 		}
 	}, {
 		/* LPM Configuration registers */
-		.name		= "sysconf",
+		.name		= "stm-sysconf",
 		.id		= 4,
 		.num_resources	= 1,
 		.resource	= (struct resource[]) {
@@ -332,7 +332,7 @@ static struct platform_device stxh205_emi = {
 	.num_resources = 3,
 	.resource = (struct resource[]) {
 		STM_PLAT_RESOURCE_MEM_NAMED("emi memory", 0, 256 * 1024 * 1024),
-		STM_PLAT_RESOURCE_MEM_NAMED("emi4 config", 0xfe90000, 0x874),
+		STM_PLAT_RESOURCE_MEM_NAMED("emi4 config", 0xfe900000, 0x874),
 		STM_PLAT_RESOURCE_MEM_NAMED("emiss config", 0xfdaa9000 , 0x80),
 	},
 	.dev.platform_data = &(struct stm_device_config){
@@ -348,6 +348,27 @@ static struct platform_device stxh205_emi = {
 /*
  * Temperature sensor
  */
+static int stxh205_temp_init(struct stm_device_state *device_state)
+{
+	struct clk *clk = clk_get(NULL, "CLK_A0_THNS");
+	struct clk *osc;
+
+	if (!IS_ERR(clk))
+		return -ENODEV;
+
+	osc = clk_get(NULL, "CLK_A0_REF");
+	if (!IS_ERR(osc)) {
+		clk_put(clk);
+		return -ENODEV;
+	}
+
+	clk_enable(clk);
+	clk_set_parent(clk, osc);
+	clk_set_rate(clk, clk_get_rate(osc) / 30);
+
+	return 0;
+}
+
 static void stxh205_temp_power(struct stm_device_state *device_state,
 		enum stm_device_power_state power)
 {
@@ -360,11 +381,13 @@ static struct platform_device sth205_temp = {
 	.name	= "stm-temp",
 	.id	= 0,
 	.dev.platform_data = &(struct plat_stm_temp_data) {
+		.correction_factor = -103,
 		.dcorrect = { SYSCONF(140), 4, 8 },
 		.overflow = { SYSCONF(148), 9, 9 },
 		.data = { SYSCONF(148), 11, 18 },
 		.device_config = &(struct stm_device_config) {
 			.sysconfs_num = 1,
+			.init = stxh205_temp_init,
 			.power = stxh205_temp_power,
 			.sysconfs = (struct stm_device_sysconf []){
 				STM_DEVICE_SYSCONF(SYSCONF(140),
@@ -549,9 +572,9 @@ void __init stxh205_configure_spifsm(struct stm_plat_spifsm_data *data)
 	/* SoC/IP Capabilities */
 	data->capabilities.no_read_repeat = 1;
 	data->capabilities.no_write_repeat = 1;
-	data->capabilities.no_sw_reset = 1;
+	data->capabilities.no_sw_reset = 0;
 	data->capabilities.read_status_bug = spifsm_read_status_clkdiv4;
-	data->capabilities.no_poll_mode_change = 1;
+	data->capabilities.no_poll_mode_change = 0;
 	data->capabilities.boot_from_spi = (sysconf_read(sc) == 0x1a) ? 1 : 0;
 
 	sysconf_release(sc);
@@ -598,6 +621,8 @@ void __init stxh205_configure_nand(struct stm_nand_config *config)
 		emiss_nandi_select(STM_NANDI_BCH);
 		stxh205_nand_bch_data.bank = config->banks;
 		stxh205_nand_bch_data.bch_ecc_cfg = config->bch_ecc_cfg;
+		stxh205_nand_bch_data.bch_bitflip_threshold =
+			config->bch_bitflip_threshold;
 		stxh205_nandi_device.dev.platform_data =
 			&stxh205_nand_bch_data;
 		stxh205_nandi_device.name = "stm-nand-bch";

@@ -25,6 +25,7 @@
 #include <linux/spi/spi_gpio.h>
 #include <linux/spi/flash.h>
 #include <linux/stm/nand.h>
+#include <linux/stm/nand_devices.h>
 #include <linux/stm/emi.h>
 #include <linux/stm/pci-glue.h>
 #include <linux/stm/platform.h>
@@ -91,6 +92,7 @@
 #define HDK7108_GPIO_MII_SPEED_SEL stm_gpio(21, 7)
 #define HDK7108_GPIO_SPI_HOLD stm_gpio(2, 2)
 #define HDK7108_GPIO_SPI_WRITE_PRO stm_gpio(2, 3)
+#define HDK7108_GPIO_LPM	stm_gpio(26, 7)
 
 static void __init hdk7108_setup(char **cmdline_p)
 {
@@ -283,17 +285,7 @@ static struct stm_nand_bank_data hdk7108_nand_flash = {
 			.size	= MTDPART_SIZ_FULL
 		},
 	},
-	.timing_data = &(struct stm_nand_timing_data) {
-		.sig_setup      = 10,           /* times in ns */
-		.sig_hold       = 10,
-		.CE_deassert    = 0,
-		.WE_to_RBn      = 100,
-		.wr_on          = 10,
-		.wr_off         = 30,
-		.rd_on          = 10,
-		.rd_off         = 30,
-		.chip_delay     = 30,           /* in us */
-	},
+	.timing_spec = &NAND_TSPEC_ST_NAND08GW3B2CN6,
 };
 
 
@@ -553,6 +545,16 @@ static int __init device_init(void)
 				});
 #endif
 
+#if !defined(CONFIG_SH_ST_HDK7108_VER1_BOARD) && \
+	!defined(CONFIG_SH_ST_HDK7108_VER1_1_BOARD)
+
+	stx7108_configure_lpm_i2c_interface(&(struct stx7108_lpm_i2c_config) {
+					.number_i2c = 2,
+					.number_gpio = HDK7108_GPIO_LPM,
+				});
+
+#endif
+
 
 #ifdef CONFIG_SH_ST_HDK7108_STMMAC0
 	stx7108_configure_ethernet(0, &(struct stx7108_ethernet_config) {
@@ -678,13 +680,13 @@ struct sh_machine_vector mv_hdk7108 __initmv = {
 
 #include "../../kernel/cpu/sh4/stm_hom.h"
 
-static int hdk7108_board_freeze(void)
+static int hdk7108_board_freeze(struct stm_wakeup_devices *wkd)
 {
 	gpio_direction_output(HDK7108_PIO_POWER_ON, 0);
 	return 0;
 }
 
-static int hdk7108_board_restore(void)
+static int hdk7108_board_restore(struct stm_wakeup_devices *wkd)
 {
 	/* Some of the peripherals are powered by regulators
 	 * triggered by the following PIO line... */

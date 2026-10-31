@@ -26,8 +26,14 @@
 #include <linux/stm/sysconf.h>
 #include <asm/irq-ilc.h>
 
+#define B2067_GPIO_FLASH_WP		stm_gpio(6, 2)
+#ifndef CONFIG_SH_ST_B2067C_BOARD
 #define B2067_GPIO_POWER_ON_ETH		stm_gpio(2, 5)
+#else
+#define B2067_GPIO_POWER_ON_ETH		stm_gpio(3, 3)
+#endif
 #define B2067_MII1_TXER			stm_gpio(0, 4)
+#define B2067_POWER_ON			stm_gpio(3, 7)
 
 static void __init b2067_setup(char **cmdline_p)
 {
@@ -138,19 +144,24 @@ static struct stm_plat_spifsm_data b2067_serial_flash =  {
 	.capabilities = {
 		/* Capabilities may be overriden by SoC configuration */
 		.dual_mode = 1,
-		.quad_mode = 1,
-		/*
-		 * Reset signal can be routed to U4 and U12 by fitting
-		 * RM52 (default is DNF).
-		 * Note rev A boards misconnected reset and hold signals.
-		 */
+#ifdef CONFIG_SH_ST_B2067A_BOARD
+		/* HOLD and RESET misconnected on Rev A boards*/
+		.quad_mode = 0,
 		.reset_signal = 0,
+#else
+		.quad_mode = 1,
+		.reset_signal = 0,  /* Reset signal can be routed to U4 and U12
+				     * by fitting RM52 (default is DNF)
+				     */
+#endif
 	},
 };
 
 /* NAND Flash */
 static struct stm_nand_bank_data b2067_nand_flash = {
-	.csn		= 1,	/* Controlled by JF3 */
+	.csn		= 0,	/* Rev A/B : set JF3 2-3 (EMI_CS0 -> NAND_CS)
+				 * Rev C   : EMI_CS0 hardwired to NAND_CS
+				 */
 	.options	= NAND_NO_AUTOINCR | NAND_USE_FLASH_BBT,
 	.nr_partitions	= 2,
 	.partitions	= (struct mtd_partition []) {
@@ -210,6 +221,9 @@ static int __init device_init(void)
 	 * but it isn't... ;-) */
 	gpio_request(B2067_GPIO_POWER_ON_ETH, "POWER_ON_ETH");
 	gpio_direction_output(B2067_GPIO_POWER_ON_ETH, 0);
+
+	gpio_request(B2067_POWER_ON, "POWER_ON");
+	gpio_direction_output(B2067_POWER_ON, 0);
 
 	stxh205_configure_ethernet(&(struct stxh205_ethernet_config) {
 			.mode = stxh205_ethernet_mode_mii,
@@ -271,12 +285,18 @@ static int __init device_init(void)
 			.emmc = 0,
 			.no_mmc_boot_data_error = 1,
 		});
+	/*
+	 * NAND MTD has no concept of write-protect, so permanently disable WP
+	 */
+	gpio_request(B2067_GPIO_FLASH_WP, "FLASH_WP");
+	gpio_direction_output(B2067_GPIO_FLASH_WP, 1);
 
 	stxh205_configure_nand(&(struct stm_nand_config) {
-			.driver = stm_nand_flex,
+			.driver = stm_nand_bch,
 			.nr_banks = 1,
 			.banks = &b2067_nand_flash,
-			.rbn.flex_connected = 1,});
+			.rbn.flex_connected = 1,
+			.bch_ecc_cfg = BCH_ECC_CFG_AUTO});
 
 	stxh205_configure_spifsm(&b2067_serial_flash);
 
@@ -306,13 +326,14 @@ struct sh_machine_vector mv_b2067 __initmv = {
 
 #include "../../kernel/cpu/sh4/stm_hom.h"
 
-static int b2067_board_freeze(void)
+static int b2067_board_freeze(struct stm_wakeup_devices *wkd)
 {
-	gpio_set_value(B2067_GPIO_POWER_ON_ETH, 0);
+	if (!wkd->stm_mac0_can_wakeup)
+		gpio_set_value(B2067_GPIO_POWER_ON_ETH, 0);
 	return 0;
 }
 
-static int b2067_board_defrost(void)
+static int b2067_board_defrost(struct stm_wakeup_devices *wkd)
 {
 	b2067_phy_reset(NULL);
 	return 0;

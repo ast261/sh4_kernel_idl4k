@@ -167,6 +167,7 @@ struct plat_stm_temp_data {
 	int calibration_value;
 	void (*custom_set_dcorrect)(void *priv);
 	unsigned long (*custom_get_data)(void *priv);
+	int correction_factor; /* add a signed correction to data read */
 	void *custom_priv;
 };
 
@@ -198,7 +199,24 @@ struct stm_plat_usb_data {
 	struct stm_device_config *device_config;
 };
 
-
+/**
+ * struct stm_lpm_i2c_data - i2c information for SBC
+ * @number_i2c : i2c number connected with external SBC
+ * @number_gpio: gpio which is connected with external SBC for power key.
+ *               This gpio will be controlled by SBC,
+ *		 Host will read status of it
+ * @status_gpio: status of gpio which is connected with SBC for power key
+ * @i2c_adap   : i2c_adapter which is connected with number_i2c
+ *
+ * This struct hold the parameters which are specific to external SBC.
+ * This external SBC is connected with SOC via i2c interface
+ */
+struct stm_lpm_i2c_data {
+	int number_i2c;
+	int number_gpio;
+	int status_gpio;
+	struct i2c_adapter *i2c_adap;
+};
 
 /*** TAP platform data ***/
 
@@ -312,6 +330,15 @@ enum stm_nand_bch_ecc_config {
 struct stm_plat_nand_bch_data {
 	struct stm_nand_bank_data *bank;
 	enum stm_nand_bch_ecc_config bch_ecc_cfg;
+
+	/* The threshold at which the number of corrected bit-flips per sector
+	 * is deemed to have reached an excessive level (triggers '-EUCLEAN' to
+	 * be returned to the caller).  The value should be in the range 1 to
+	 * <ecc-strength> where <ecc-strength> is 18 or 30, depending on the BCH
+	 * ECC mode in operation.  A value of 0 is interpreted by the driver as
+	 * <ecc-strength>.
+	 */
+	unsigned int bch_bitflip_threshold;
 };
 
 struct stm_plat_nand_emi_data {
@@ -334,6 +361,9 @@ struct stm_nand_config {
 		int flex_connected;
 	} rbn;
 	enum stm_nand_bch_ecc_config bch_ecc_cfg;
+	unsigned int bch_bitflip_threshold; /* See description in
+					     * 'stm_plat_nand_bch_data'.
+					     */
 };
 
 
