@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2010-2011 ARM Limited. All rights reserved.
- * Copyright (C) 2011 STMicroelectronics R&D Limited. All rights reserved.
  * 
  * This program is free software and is provided to you under the terms of the GNU General Public License version 2
  * as published by the Free Software Foundation, and any use by you of this program is subject to the terms of such GNU licence.
@@ -22,7 +21,6 @@
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/dma-mapping.h>
-#include <asm/cacheflush.h>
 
 #include "mali_osk.h"
 #include "mali_ukk.h" /* required to hook in _mali_ukk_mem_mmap handling */

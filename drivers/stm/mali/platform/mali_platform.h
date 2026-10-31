@@ -29,9 +29,9 @@ extern "C" {
 #endif
 
 /** @brief Platform specific setup and initialisation of MALI
- * 
+ *
  * This is called from the entrypoint of the driver to initialize the platform
- * When using PMM, it is also called from the PMM start up to initialise the 
+ * When using PMM, it is also called from the PMM start up to initialise the
  * system PMU
  *
  * @param resource This is NULL when called on first driver start up, else it will
@@ -41,7 +41,7 @@ extern "C" {
 _mali_osk_errcode_t mali_platform_init(_mali_osk_resource_t *resource);
 
 /** @brief Platform specific deinitialisation of MALI
- * 
+ *
  * This is called on the exit of the driver to terminate the platform
  * When using PMM, it is also called from the PMM termination code to clean up the
  * system PMU
@@ -53,7 +53,7 @@ _mali_osk_errcode_t mali_platform_init(_mali_osk_resource_t *resource);
 _mali_osk_errcode_t mali_platform_deinit(_mali_osk_resource_type_t *type);
 
 /** @brief Platform specific powerdown sequence of MALI
- * 
+ *
  * Called as part of platform init if there is no PMM support, else the
  * PMM will call it.
  *
@@ -64,7 +64,7 @@ _mali_osk_errcode_t mali_platform_deinit(_mali_osk_resource_type_t *type);
 _mali_osk_errcode_t mali_platform_powerdown(u32 cores);
 
 /** @brief Platform specific powerup sequence of MALI
- * 
+ *
  * Called as part of platform deinit if there is no PMM support, else the
  * PMM will call it.
  *
