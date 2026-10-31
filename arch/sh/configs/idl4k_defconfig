@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.32.61
-# Sat Oct 31 18:22:34 2026
+# Sat Oct 31 18:47:37 2026
 #
 CONFIG_SUPERH=y
 CONFIG_SUPERH32=y
@@ -1383,6 +1383,8 @@ CONFIG_DEBUG_FS=y
 # CONFIG_DEBUG_KERNEL is not set
 # CONFIG_DEBUG_BUGVERBOSE is not set
 # CONFIG_DEBUG_MEMORY_INIT is not set
+CONFIG_ARCH_WANT_FRAME_POINTERS=y
+CONFIG_FRAME_POINTER=y
 # CONFIG_RCU_CPU_STALL_DETECTOR is not set
 # CONFIG_LATENCYTOP is not set
 # CONFIG_SYSCTL_SYSCALL_CHECK is not set
