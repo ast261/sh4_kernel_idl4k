@@ -50,6 +50,7 @@
 #define CFG_N25Q_CHECK_ERROR_FLAGS		0x00000020
 #define CFG_WRSR_FORCE_16BITS			0x00000040
 #define CFG_RD_WR_LOCK_REG			0x00000080
+#define CFG_MX25_LOCK_TOGGLE_QE_BIT		0x00000100
 
 /* Block Protect Bits (BPx) */
 #define BPX_MAX_BITS		4			/* Max BPx bits */
@@ -161,7 +162,14 @@ struct stm_spi_fsm {
 
 /* MX25 Commands */
 /*	- Read Security Register (home of '4BYTE' status bit!) */
-#define MX25_CMD_RDSCUR		0x2B
+#define MX25_CMD_WRITE_1_4_4	0x38
+#define MX25_CMD_RDSCUR		0x2b
+#define MX25_CMD_RDSFDP		0x5a
+#define MX25_CMD_SBLK		0x36
+#define MX25_CMD_SBULK		0x39
+#define MX25_CMD_RDBLOCK	0x3c
+#define MX25_CMD_RDDPB		0xe0
+#define MX25_CMD_WRDPB		0xe1
 
 /* S25FLxxxS commands */
 /*	- WRITE/ERASE 32-bit address commands */
@@ -344,6 +352,29 @@ static struct fsm_seq fsm_seq_erase_chip = {
 	},
 	.seq_cfg = (SEQ_CFG_PADS_1 |
 		    SEQ_CFG_ERASE |
+		    SEQ_CFG_READNOTWRITE |
+		    SEQ_CFG_CSDEASSERT |
+		    SEQ_CFG_STARTSEQ),
+};
+
+static struct fsm_seq fsm_seq_read_rdsfdp = {
+	.data_size = TRANSFER_SIZE(4),
+	.seq_opc[0] = (SEQ_OPC_PADS_1 |
+		       SEQ_OPC_CYCLES(8) |
+		       SEQ_OPC_OPCODE(MX25_CMD_RDSFDP)),
+	.addr_cfg = (ADR_CFG_CYCLES_ADD1(8) |
+		     ADR_CFG_PADS_1_ADD1 |
+		     ADR_CFG_CYCLES_ADD2(16) |
+		     ADR_CFG_PADS_1_ADD2),
+	.seq = {
+		FSM_INST_CMD1,
+		FSM_INST_ADD1,
+		FSM_INST_ADD2,
+		FSM_INST_DUMMY,
+		FSM_INST_DATA_READ,
+		FSM_INST_STOP,
+	},
+	.seq_cfg = (SEQ_CFG_PADS_1 |
 		    SEQ_CFG_READNOTWRITE |
 		    SEQ_CFG_CSDEASSERT |
 		    SEQ_CFG_STARTSEQ),
@@ -968,7 +999,8 @@ static int fsm_config_rwe_seqs_default(struct stm_spi_fsm *fsm,
 	if (fsm_search_configure_rw_seq(fsm, &fsm_seq_read,
 					default_read_configs,
 					info->capabilities) != 0) {
-		dev_err(fsm->dev, "failed to configure READ sequence according to capabilities [0x%08x]\n",
+		dev_err(fsm->dev,
+			"failed to configure READ sequence according to capabilities [0x%08x]\n",
 			info->capabilities);
 		return 1;
 	}
@@ -977,7 +1009,8 @@ static int fsm_config_rwe_seqs_default(struct stm_spi_fsm *fsm,
 	if (fsm_search_configure_rw_seq(fsm, &fsm_seq_write,
 					default_write_configs,
 					info->capabilities) != 0) {
-		dev_err(fsm->dev, "failed to configure WRITE sequence according to capabilities [0x%08x]\n",
+		dev_err(fsm->dev,
+			"failed to configure WRITE sequence according to capabilities [0x%08x]\n",
 			info->capabilities);
 		return 1;
 	}
@@ -1162,6 +1195,7 @@ static void dump_bpx_region(struct stm_spi_fsm *fsm, uint8_t bpx)
 		fsm->bpx_tbprot ? fsm->bpx_bnds[bpx] : fsm->mtd.size);
 }
 
+#ifdef CONFIG_STM_SPI_FSM_DEBUG
 /* Print the lockable regions supported by the BPx scheme */
 static void dump_bpx_regions(struct stm_spi_fsm *fsm)
 {
@@ -1173,6 +1207,7 @@ static void dump_bpx_regions(struct stm_spi_fsm *fsm)
 	for (i = 0; i < fsm->bpx_n_bnds; i++)
 		dump_bpx_region(fsm, i);
 }
+#endif
 
 /* Extract BPx from the value of the status register */
 static uint8_t status_to_bpx(struct stm_spi_fsm *fsm, uint8_t status)
@@ -1190,6 +1225,8 @@ static uint8_t status_to_bpx(struct stm_spi_fsm *fsm, uint8_t status)
 	return bpx;
 }
 
+static int fsm_read_rdsfdp(struct stm_spi_fsm *fsm, uint32_t offs,
+			   uint8_t dummy_cycles, uint8_t *data, int bytes);
 static int fsm_read_status(struct stm_spi_fsm *fsm, uint8_t cmd,
 			   uint8_t *data, int bytes);
 static int fsm_write_status(struct stm_spi_fsm *fsm, uint8_t cmd,
@@ -1561,6 +1598,16 @@ static int s25fl_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 
 /* [MX25xxx] Configure READ/Write sequences */
 #define MX25_STATUS_QE			(0x1 << 6)
+#define MX25_SECURITY_WPSEL		(0x1 << 7)
+
+/* mx25 WRITE configurations, in order of preference */
+static struct seq_rw_config mx25_write_configs[] = {
+	{FLASH_CAPS_WRITE_1_4_4, MX25_CMD_WRITE_1_4_4,  1, 4, 4, 0x00, 0, 0},
+	{FLASH_CAPS_READ_WRITE,  FLASH_CMD_WRITE,       1, 1, 1, 0x00, 0, 0},
+
+	/* terminating entry */
+	{0x00,			  0,			 0, 0, 0, 0x00, 0, 0},
+};
 
 static int mx25_configure_en32bitaddr_seq(struct fsm_seq *seq)
 {
@@ -1584,14 +1631,33 @@ static int mx25_configure_en32bitaddr_seq(struct fsm_seq *seq)
 
 static int mx25_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 {
+	uint8_t	rdsfdp[2];
 	uint32_t data_pads;
-	uint8_t sta;
+	uint32_t capabilities = info->capabilities;
+	uint8_t sta, lock_opcode;
+	uint64_t size = info->sector_size * info->n_sectors;
 
-	/*
-	 * Use default READ/WRITE sequences
-	 */
-	if (fsm_config_rwe_seqs_default(fsm, info) != 0)
+	/* Configure 'READ' sequence */
+	if (fsm_search_configure_rw_seq(fsm, &fsm_seq_read,
+					default_read_configs,
+					capabilities) != 0) {
+		dev_err(fsm->dev, "failed to configure READ sequence according to capabilities [0x%08x]\n",
+			capabilities);
 		return 1;
+	}
+
+	/* Configure 'WRITE' sequence */
+	if (fsm_search_configure_rw_seq(fsm, &fsm_seq_write,
+					mx25_write_configs,
+					capabilities) != 0) {
+		dev_err(fsm->dev, "failed to configure WRITE sequence according to capabilities [0x%08x]\n",
+			capabilities);
+		return 1;
+	}
+
+	/* Configure 'ERASE_SECTOR' sequence */
+	configure_erasesec_seq(&fsm_seq_erase_sector,
+			       capabilities & FLASH_CAPS_32BITADDR);
 
 	/*
 	 * Configure 32-bit Address Support
@@ -1613,6 +1679,71 @@ static int mx25_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 					      CFG_ERASESEC_TOGGLE32BITADDR);
 	}
 
+	/*
+	 * Check WPSEL
+	 * WPSEL = 0 => Block Lock protection mode
+	 * WPSEL = 1 => Individual block lock protection mode
+	 */
+	fsm_read_status(fsm, MX25_CMD_RDSCUR, &sta, 1);
+	if (sta & MX25_SECURITY_WPSEL) {
+		/* Individual block lock protection mode detected */
+
+		/*
+		 * Read opcode used to lock
+		 * Read SFDP mode at @0x68, 8 dummy cycles required
+		 * bits 2-9 => opcode used
+		 */
+		fsm_read_rdsfdp(fsm, 0x68, 8, rdsfdp, 2);
+		lock_opcode = ((rdsfdp[1] & 0x03) << 6) |
+			      ((rdsfdp[0] & 0xfc) >> 2);
+
+		if (lock_opcode == MX25_CMD_SBLK) {
+			info->capabilities |= FLASH_CAPS_BLK_LOCKING;
+
+			configure_block_rd_lock_seq(&fsm_seq_rd_lock_reg,
+						    MX25_CMD_RDBLOCK, 0);
+			configure_block_lock_seq(&fsm_seq_lock,
+						 MX25_CMD_SBLK, 0);
+			configure_block_lock_seq(&fsm_seq_unlock,
+						 MX25_CMD_SBULK, 0);
+
+			/*
+			 * Handle 4KiB parameter sectors
+			 * at the top and the bottom
+			 */
+			fsm->p4k_bot_end = 16 * 0x1000;
+			fsm->p4k_top_start = size - (16 * 0x1000);
+
+			fsm->lock_mask = 0xff;
+			fsm->lock_val[FSM_BLOCK_UNLOCKED] = 0x00;
+			fsm->lock_val[FSM_BLOCK_LOCKED] = 0xff;
+		} else if (lock_opcode == MX25_CMD_WRDPB) {
+			info->capabilities |= FLASH_CAPS_BLK_LOCKING;
+
+			configure_block_rd_lock_seq(&fsm_seq_rd_lock_reg,
+						    MX25_CMD_RDDPB, 1);
+			configure_block_wr_lock_seq(&fsm_seq_wr_lock_reg,
+						    MX25_CMD_WRDPB, 1);
+
+			fsm->configuration |= CFG_RD_WR_LOCK_REG;
+
+			/*
+			 * Handle 4KiB parameter sectors
+			 * at the top and the bottom
+			 */
+			fsm->p4k_bot_end = 16 * 0x1000;
+			fsm->p4k_top_start = size - (16 * 0x1000);
+
+			fsm->lock_mask = 0xff;
+			fsm->lock_val[FSM_BLOCK_UNLOCKED] = 0x00;
+			fsm->lock_val[FSM_BLOCK_LOCKED] = 0xff;
+		} else
+			/* Lock opcode is not supported */
+			dev_warn(fsm->dev,
+				 "Lock/unlock command %02x not supported.\n",
+				 lock_opcode);
+	}
+
 	/* Check status of 'QE' bit, update if required. */
 	data_pads = ((fsm_seq_read.seq_cfg >> 16) & 0x3) + 1;
 	fsm_read_status(fsm, FLASH_CMD_RDSR, &sta, 1);
@@ -1622,6 +1753,9 @@ static int mx25_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 			sta |= MX25_STATUS_QE;
 			fsm_write_status(fsm, FLASH_CMD_WRSR, sta, 1, 1);
 		}
+
+		/* impossible to lock/unlock mx25l3255e if QE bit is set */
+		fsm->configuration |= CFG_MX25_LOCK_TOGGLE_QE_BIT;
 	} else {
 		if (sta & MX25_STATUS_QE) {
 			/* Clear 'QE' */
@@ -2074,6 +2208,33 @@ static int fsm_read_jedec(struct stm_spi_fsm *fsm, uint8_t *const jedec)
 	return 0;
 }
 
+static int fsm_read_rdsfdp(struct stm_spi_fsm *fsm, uint32_t offs,
+			   uint8_t dummy_cycles, uint8_t *data, int bytes)
+{
+	struct fsm_seq *seq = &fsm_seq_read_rdsfdp;
+	uint32_t tmp;
+	uint8_t *t = (uint8_t *)&tmp;
+	int i;
+
+	dev_dbg(fsm->dev, "read 'rdsfdp' register, %d byte(s)\n", bytes);
+
+	seq->addr1 = (offs >> 16) & 0xffff;
+	seq->addr2 = offs & 0xffff;
+
+	seq->dummy = (dummy_cycles & 0x3f) << 16;
+
+	fsm_load_seq(fsm, seq);
+
+	fsm_read_fifo(fsm, &tmp, 4);
+
+	for (i = 0; i < bytes; i++)
+		data[i] = t[i];
+
+	fsm_wait_seq(fsm);
+
+	return 0;
+}
+
 static int fsm_read_status(struct stm_spi_fsm *fsm, uint8_t cmd,
 			   uint8_t *data, int bytes)
 {
@@ -2171,6 +2332,15 @@ static int fsm_enter_32bitaddr(struct stm_spi_fsm *fsm, int enter)
 	return 0;
 }
 
+static void fsm_enter_quad_mode(struct stm_spi_fsm *fsm, int enter)
+{
+	uint8_t sta;
+
+	fsm_read_status(fsm, FLASH_CMD_RDSR, &sta, 1);
+	sta = (enter ? sta | MX25_STATUS_QE : sta & ~MX25_STATUS_QE);
+	fsm_write_status(fsm, FLASH_CMD_WRSR, sta, 1, 1);
+}
+
 static uint8_t fsm_read_lock_reg(struct stm_spi_fsm *fsm, uint32_t offs)
 {
 	struct fsm_seq *seq = &fsm_seq_rd_lock_reg;
@@ -2217,6 +2387,8 @@ static int fsm_lock(struct stm_spi_fsm *fsm, uint32_t offs,
 	fsm_load_seq(fsm, seq);
 
 	fsm_wait_seq(fsm);
+
+	fsm_wait_busy(fsm, FLASH_MAX_STA_WRITE_MS);
 
 	return 0;
 }
@@ -2485,6 +2657,9 @@ static int fsm_xxlock_blocks(struct stm_spi_fsm *fsm, loff_t offs, uint64_t len,
 	if (fsm->configuration & CFG_LOCK_TOGGLE32BITADDR)
 		fsm_enter_32bitaddr(fsm, 1);
 
+	if (fsm->configuration & CFG_MX25_LOCK_TOGGLE_QE_BIT)
+		fsm_enter_quad_mode(fsm, 0);
+
 	while (offs < offs_end) {
 		fsm_xxlock_oneblock(fsm, offs, lock);
 
@@ -2494,6 +2669,9 @@ static int fsm_xxlock_blocks(struct stm_spi_fsm *fsm, loff_t offs, uint64_t len,
 		else
 			offs += mtd->erasesize;
 	}
+
+	if (fsm->configuration & CFG_MX25_LOCK_TOGGLE_QE_BIT)
+		fsm_enter_quad_mode(fsm, 1);
 
 	if (fsm->configuration & CFG_LOCK_TOGGLE32BITADDR)
 		fsm_enter_32bitaddr(fsm, 0);
@@ -3161,12 +3339,17 @@ static int __init stm_spi_fsm_probe(struct platform_device *pdev)
 		/* - Individual Block Locking scheme */
 		fsm->mtd.lock = fsm_mtd_lock;
 		fsm->mtd.unlock = fsm_mtd_unlock;
+
+		dev_info(fsm->dev, "Individual block locking scheme enabled\n");
 	} else if (info->capabilities & FLASH_CAPS_BPX_LOCKING) {
 		/* - PBx Block Protection Scheme */
 		fsm->mtd.lock = fsm_mtd_bpx_lock;
 		fsm->mtd.unlock = fsm_mtd_bpx_unlock;
 
+		dev_info(fsm->dev, "BPx block locking scheme enabled\n");
+#ifdef CONFIG_STM_SPI_FSM_DEBUG
 		dump_bpx_regions(fsm);
+#endif
 		fsm_dump_bpx_state(fsm);
 	}
 
