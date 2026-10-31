@@ -277,6 +277,12 @@ static struct platform_device stxh205_ethernet_device = {
 	},
 };
 
+#define GMAC_AHB_CONFIG         0x2000
+static void stxh205_ethernet_bus_setup(void __iomem *ioaddr)
+{
+	writel(0x26c209, ioaddr + GMAC_AHB_CONFIG);
+}
+
 void __init stxh205_configure_ethernet(struct stxh205_ethernet_config *config)
 {
 	static int configured;
@@ -333,6 +339,8 @@ void __init stxh205_configure_ethernet(struct stxh205_ethernet_config *config)
 		return;
 	}
 
+	stxh205_ethernet_platform_data.bus_setup = stxh205_ethernet_bus_setup;
+
 	plat_data->custom_cfg = (void *) pad_config;
 	plat_data->interface = interface;
 	plat_data->bus_id = config->phy_bus;
@@ -369,8 +377,8 @@ static struct stm_pad_config stxh205_usb_phy_pad_config = {
 		STM_PAD_SYSCONF(SYSCONF(501), 13, 15, 3), /* SQRXTUNE0 */
 		STM_PAD_SYSCONF(SYSCONF(501), 16, 18, 3), /* SQRXTUNE1 */
 		STM_PAD_SYSCONF(SYSCONF(501), 19, 22, 3), /* TXFSLSTUNE0 */
-		STM_PAD_SYSCONF(SYSCONF(501), 23, 23, 0), /* TXPREEMPHASISTUNE0 */
-		STM_PAD_SYSCONF(SYSCONF(501), 24, 24, 0), /* TXPREEMPHASISTUNE1 */
+		STM_PAD_SYSCONF(SYSCONF(501), 23, 23, 1), /* TXPREEMPHASISTUNE0 */
+		STM_PAD_SYSCONF(SYSCONF(501), 24, 24, 1), /* TXPREEMPHASISTUNE1 */
 		STM_PAD_SYSCONF(SYSCONF(501), 25, 25, 0), /* TXRISETUNE0 */
 		STM_PAD_SYSCONF(SYSCONF(501), 26, 26, 0), /* TXRISETUNE1 */
 		STM_PAD_SYSCONF(SYSCONF(501), 27, 30, 8), /* TXVREFTUNE0 */

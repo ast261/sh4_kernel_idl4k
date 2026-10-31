@@ -862,9 +862,9 @@ iic_xfer_retry:
 
 	iic_state_machine(0, adap);
 
-	timeout = wait_event_interruptible_timeout(adap->wait_queue,
+	timeout = wait_event_timeout(adap->wait_queue,
 						   (transaction.waitcondition ==
-						    0), i2c_adap->timeout * HZ);
+						    0), i2c_adap->timeout);
 
 	local_irq_save(flag);
 
@@ -1236,7 +1236,7 @@ static int __init iic_stm_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, i2c_stm);
-	i2c_stm->adapter.timeout = 2;
+	i2c_stm->adapter.timeout = 2 * HZ;
 	i2c_stm->adapter.retries = 0;
 	i2c_stm->adapter.class = I2C_CLASS_HWMON | I2C_CLASS_TV_ANALOG |
 		I2C_CLASS_TV_DIGITAL | I2C_CLASS_DDC | I2C_CLASS_SPD;;

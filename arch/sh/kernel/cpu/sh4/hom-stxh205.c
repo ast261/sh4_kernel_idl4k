@@ -23,6 +23,7 @@
 #include <linux/stm/sysconf.h>
 #include <linux/stm/platform.h>
 #include <linux/stm/gpio.h>
+#include <linux/stm/lpm.h>
 
 #include <asm/irq-ilc.h>
 
@@ -42,8 +43,14 @@
 
 #define SBC_GPIO_PORT(_nr)		(0xfe610000 + (_nr) * 0x1000)
 
+#ifdef CONFIG_SH_ST_B2064C_BOARD
+#define LMI_RET_GPIO_PORT		3
+#define LMI_RET_GPIO_PIN		2
+#else
 #define LMI_RET_GPIO_PORT		3
 #define LMI_RET_GPIO_PIN		3
+#endif
+
 #define LMI_RETENTION_PIN	stm_gpio(LMI_RET_GPIO_PORT, LMI_RET_GPIO_PIN)
 
 static unsigned long stxh205_hom_table[] __cacheline_aligned = {
@@ -93,7 +100,9 @@ static int stxh205_hom_begin(void)
 static int stxh205_hom_prepare(void)
 {
 	stm_freeze_board(&stxh205_wkd);
-
+#ifdef CONFIG_STM_LPM
+	stm_lpm_config_reboot(stm_lpm_reboot_with_ddr_self_refresh);
+#endif
 	return 0;
 }
 

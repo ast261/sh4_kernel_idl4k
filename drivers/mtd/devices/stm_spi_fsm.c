@@ -13,6 +13,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/sort.h>
 #include <linux/delay.h>
 #include <linux/clk.h>
 #include <linux/err.h>
@@ -21,24 +22,38 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 
+#include <asm/div64.h>
+
 #include "stm_spi_fsm.h"
 
 #define NAME		"stm-spi-fsm"
 
 #define FLASH_PROBE_FREQ	10		/* Probe freq. (MHz) */
 #define FLASH_PAGESIZE		256
-#define FLASH_MAX_BUSY_WAIT	(300 * HZ)	/* Maximum 'CHIPERASE' time */
+
+/* Maximum operation times (in ms) */
+#define FLASH_MAX_CHIP_ERASE_MS	500000		/* Chip Erase time */
+#define FLASH_MAX_SEC_ERASE_MS	30000		/* Sector Erase time */
+#define FLASH_MAX_PAGE_WRITE_MS 100		/* Write Page time */
+#define FLASH_MAX_STA_WRITE_MS	4000		/* Write status reg time */
+#define FSM_MAX_WAIT_SEQ_MS	1000		/* FSM execution time */
 
 
 /*
- * Flags to tweak operation of default read/write/erase routines
+ * Flags to tweak operation of default read/write/erase/lock routines
  */
 #define CFG_READ_TOGGLE32BITADDR		0x00000001
 #define CFG_WRITE_TOGGLE32BITADDR		0x00000002
+#define CFG_LOCK_TOGGLE32BITADDR		0x00000004
 #define CFG_ERASESEC_TOGGLE32BITADDR		0x00000008
 #define CFG_S25FL_CHECK_ERROR_FLAGS		0x00000010
 #define CFG_N25Q_CHECK_ERROR_FLAGS		0x00000020
+#define CFG_WRSR_FORCE_16BITS			0x00000040
+#define CFG_RD_WR_LOCK_REG			0x00000080
 
+/* Block Protect Bits (BPx) */
+#define BPX_MAX_BITS		4			/* Max BPx bits */
+#define BPX_MAX_N_BNDS		(1 << BPX_MAX_BITS)	/* Max BPx boundaries */
 
 /*
  * SPI FSM Controller data
@@ -51,6 +66,21 @@ struct stm_spi_fsm {
 	struct stm_spifsm_caps	capabilities;
 	uint32_t		configuration;
 	uint32_t		fifo_dir_delay;
+
+	/* Block locking support */
+	uint8_t			lock_mask;
+	uint8_t			lock_val[2];
+
+	/* 4KiB Parameter Sector boundaries */
+	uint64_t		p4k_bot_end;
+	uint64_t		p4k_top_start;
+
+	/* 'BPx' Block Protection scheme */
+	int			bpx_tbprot;
+	int			bpx_n_bnds;
+	int			bpx_n_bits;
+	uint8_t			bpx_sr_masks[BPX_MAX_BITS];
+	uint64_t		bpx_bnds[BPX_MAX_N_BNDS];
 
 	void __iomem		*base;
 	struct mutex		lock;
@@ -68,7 +98,9 @@ struct stm_spi_fsm {
 #define FLASH_CMD_RDID		0x9f
 #define FLASH_CMD_RDSR		0x05
 #define FLASH_CMD_RDSR2		0x35
+#define FLASH_CMD_RDSR3		0x15
 #define FLASH_CMD_WRSR		0x01
+#define FLASH_CMD_WRSR3		0x11
 #define FLASH_CMD_SE_4K		0x20
 #define FLASH_CMD_SE_32K	0x52
 #define FLASH_CMD_SE		0xd8
@@ -108,6 +140,9 @@ struct stm_spi_fsm {
 #define N25Q_CMD_RDVECR		0x65
 #define N25Q_CMD_RDNVCR		0xb5
 #define N25Q_CMD_WRNVCR		0xb1
+#define N25Q_CMD_RDLOCK		0xe8
+#define N25Q_CMD_WRLOCK		0xe5
+
 
 /* N25Q Flags Status Register: Error Flags */
 #define N25Q_FLAGS_ERR_ERASE	(1 << 5)
@@ -118,6 +153,11 @@ struct stm_spi_fsm {
 				 N25Q_FLAGS_ERR_PROG	| \
 				 N25Q_FLAGS_ERR_VPP	| \
 				 N25Q_FLAGS_ERR_PROT)
+
+/* W25Q commands */
+#define W25Q_CMD_RDLOCK		0x3d
+#define W25Q_CMD_LOCK		0x36
+#define W25Q_CMD_UNLOCK		0x39
 
 /* MX25 Commands */
 /*	- Read Security Register (home of '4BYTE' status bit!) */
@@ -142,6 +182,7 @@ struct stm_spi_fsm {
 #define FLASH_STATUS_BP0	0x04
 #define FLASH_STATUS_BP1	0x08
 #define FLASH_STATUS_BP2	0x10
+#define FLASH_STATUS_BP3	0x20
 #define FLASH_STATUS_SRWP0	0x80
 /*	- S25FL Error Flags */
 #define S25FL_STATUS_E_ERR	0x20
@@ -149,9 +190,12 @@ struct stm_spi_fsm {
 /*	- Timeout status */
 #define FLASH_STATUS_TIMEOUT	0xff
 
+/* Maximum READID length */
+#define MAX_READID_LEN		6
+
 
 /* Capabilities */
-#define FLASH_CAPS_SINGLE	0x000000ff
+#define FLASH_CAPS_SINGLE	0x0000ffff
 #define FLASH_CAPS_READ_WRITE	0x00000001
 #define FLASH_CAPS_READ_FAST	0x00000002
 #define FLASH_CAPS_SE_4K	0x00000004
@@ -159,23 +203,31 @@ struct stm_spi_fsm {
 #define FLASH_CAPS_CE		0x00000010
 #define FLASH_CAPS_32BITADDR	0x00000020
 #define FLASH_CAPS_RESET	0x00000040
-#define FLASH_CAPS_DYB_LOCKING	0x00000080
+/* Device supports some form of volatile, individual block locking scheme
+ * (e.g. Spansion's "DYB" scheme, or Micron's "Sector Lock Register").
+ */
+#define FLASH_CAPS_BLK_LOCKING	0x00000080
+/* 'BPx' Block Protection scheme */
+#define FLASH_CAPS_BPX_LOCKING	0x00000100
 
-#define FLASH_CAPS_DUAL		0x0000ff00
-#define FLASH_CAPS_READ_1_1_2	0x00000100
-#define FLASH_CAPS_READ_1_2_2	0x00000200
-#define FLASH_CAPS_READ_2_2_2	0x00000400
-#define FLASH_CAPS_WRITE_1_1_2	0x00001000
-#define FLASH_CAPS_WRITE_1_2_2	0x00002000
-#define FLASH_CAPS_WRITE_2_2_2	0x00004000
+#define FLASH_CAPS_DUAL		0x00ff0000
+#define FLASH_CAPS_READ_1_1_2	0x00010000
+#define FLASH_CAPS_READ_1_2_2	0x00020000
+#define FLASH_CAPS_READ_2_2_2	0x00040000
+#define FLASH_CAPS_WRITE_1_1_2	0x00100000
+#define FLASH_CAPS_WRITE_1_2_2	0x00200000
+#define FLASH_CAPS_WRITE_2_2_2	0x00400000
 
-#define FLASH_CAPS_QUAD		0x00ff0000
-#define FLASH_CAPS_READ_1_1_4	0x00010000
-#define FLASH_CAPS_READ_1_4_4	0x00020000
-#define FLASH_CAPS_READ_4_4_4	0x00040000
-#define FLASH_CAPS_WRITE_1_1_4	0x00100000
-#define FLASH_CAPS_WRITE_1_4_4	0x00200000
-#define FLASH_CAPS_WRITE_4_4_4	0x00400000
+#define FLASH_CAPS_QUAD		0xff000000
+#define FLASH_CAPS_READ_1_1_4	0x01000000
+#define FLASH_CAPS_READ_1_4_4	0x02000000
+#define FLASH_CAPS_READ_4_4_4	0x04000000
+#define FLASH_CAPS_WRITE_1_1_4	0x10000000
+#define FLASH_CAPS_WRITE_1_4_4	0x20000000
+#define FLASH_CAPS_WRITE_4_4_4	0x40000000
+
+#define FSM_BLOCK_UNLOCKED	0
+#define FSM_BLOCK_LOCKED	1
 
 /*
  * FSM template sequences (Note, various fields are modified on-the-fly)
@@ -204,8 +256,9 @@ static struct fsm_seq fsm_seq_dummy = {
 		    SEQ_CFG_STARTSEQ),
 };
 
+#define MAX_READID_LEN_ALIGNED	((MAX_READID_LEN + 0x3) & ~0x3)
 static struct fsm_seq fsm_seq_read_jedec = {
-	.data_size = TRANSFER_SIZE(8),
+	.data_size = TRANSFER_SIZE(MAX_READID_LEN_ALIGNED),
 	.seq_opc[0] = (SEQ_OPC_PADS_1 |
 		       SEQ_OPC_CYCLES(8) |
 		       SEQ_OPC_OPCODE(FLASH_CMD_RDID)),
@@ -315,6 +368,10 @@ static int configure_erasesec_seq(struct fsm_seq *seq, int use_32bit_addr)
 static struct fsm_seq fsm_seq_read;
 static struct fsm_seq fsm_seq_write;
 static struct fsm_seq fsm_seq_en32bitaddr;
+static struct fsm_seq fsm_seq_rd_lock_reg;
+static struct fsm_seq fsm_seq_wr_lock_reg;
+static struct fsm_seq fsm_seq_lock;
+static struct fsm_seq fsm_seq_unlock;
 
 /*
  * Debug code for examining FSM sequences
@@ -326,7 +383,9 @@ char *flash_cmd_strs[256] = {
 	[FLASH_CMD_RDID]	= "RDID",
 	[FLASH_CMD_RDSR]	= "RDSR",
 	[FLASH_CMD_RDSR2]	= "RDSR2",
+	[FLASH_CMD_RDSR3]	= "RDSR3",
 	[FLASH_CMD_WRSR]	= "WRSR",
+	[FLASH_CMD_WRSR3]	= "WRSR3",
 	[FLASH_CMD_SE]		= "SE",
 	[FLASH_CMD_SE_4K]	= "SE_4K",
 	[FLASH_CMD_SE_32K]	= "SE_32K",
@@ -483,12 +542,9 @@ static void fsm_dump_seq(char *tag, struct fsm_seq *seq)
 struct flash_info {
 	char		*name;
 
-	/* JEDEC id zero means "no ID" (most older chips); otherwise it has
-	 * a high byte of zero plus three data bytes: the manufacturer id,
-	 * then a two byte device id.
-	 */
-	u32		jedec_id;
-	u16             ext_id;
+	/* READID data, as returned by 'FLASH_CMD_RDID' (0x9f). */
+	u8		readid[MAX_READID_LEN];
+	int		readid_len;
 
 	/* The size listed here is what works with FLASH_CMD_SE, which isn't
 	 * necessarily called a "sector" by the vendor.
@@ -496,7 +552,10 @@ struct flash_info {
 	unsigned	sector_size;
 	u16		n_sectors;
 
-	/* FLASH device capabilities */
+	/* FLASH device capabilities.  Note, in contrast to the other
+	 * capabilities, 'FLASH_CAPS_32BITADDR' is set at probe time, based on
+	 * the size of the device found.
+	 */
 	u32		capabilities;
 
 	/* Maximum operating frequency.  Note, where FAST_READ is supported,
@@ -506,6 +565,38 @@ struct flash_info {
 
 	int		(*config)(struct stm_spi_fsm *, struct flash_info *);
 };
+
+/* Device with standard 3-byte JEDEC ID */
+#define JEDEC_INFO(_name, _jedec_id, _sector_size, _n_sectors,		\
+		   _capabilities, _max_freq, _config)			\
+	{								\
+		.name = (_name),					\
+		.readid[0] = ((_jedec_id) >> 16 & 0xff),		\
+		.readid[1] = ((_jedec_id) >>  8 & 0xff),		\
+		.readid[2] = ((_jedec_id) >>  0 & 0xff),		\
+		.readid_len = 3,					\
+		.sector_size = (_sector_size),				\
+		.n_sectors = (_n_sectors),				\
+		.capabilities = (_capabilities),			\
+		.max_freq = (_max_freq),				\
+		.config = (_config)					\
+	}
+
+/* Device with arbitrary-length READID */
+#define RDID(...) __VA_ARGS__	/* Dummy macro to protect array argument. */
+#define RDID_INFO(_name, _readid, _readid_len, _sector_size,		\
+		  _n_sectors, _capabilities, _max_freq, _config)	\
+	{								\
+		.name = (_name),					\
+		.readid = _readid,					\
+		.readid_len = _readid_len,				\
+		.capabilities = (_capabilities),			\
+		.sector_size = (_sector_size),				\
+		.n_sectors = (_n_sectors),				\
+		.capabilities = (_capabilities),			\
+		.max_freq = (_max_freq),				\
+		.config = (_config)					\
+	}
 
 static int w25q_config(struct stm_spi_fsm *fsm, struct flash_info *info);
 static int n25q_config(struct stm_spi_fsm *fsm, struct flash_info *info);
@@ -518,19 +609,19 @@ static struct flash_info __devinitdata flash_types[] = {
 	 * (newer production versions may have feature updates (eg faster
 	 * operating frequency) */
 #define M25P_CAPS (FLASH_CAPS_READ_WRITE | FLASH_CAPS_READ_FAST)
-	{ "m25p40",  0x202013, 0,  64 * 1024,   8, M25P_CAPS, 25, NULL},
-	{ "m25p80",  0x202014, 0,  64 * 1024,  16, M25P_CAPS, 25, NULL},
-	{ "m25p16",  0x202015, 0,  64 * 1024,  32, M25P_CAPS, 25, NULL},
-	{ "m25p32",  0x202016, 0,  64 * 1024,  64, M25P_CAPS, 50, NULL},
-	{ "m25p64",  0x202017, 0,  64 * 1024, 128, M25P_CAPS, 50, NULL},
-	{ "m25p128", 0x202018, 0, 256 * 1024,  64, M25P_CAPS, 50, NULL},
+	JEDEC_INFO("m25p40",  0x202013,  64 * 1024,   8, M25P_CAPS, 25, NULL),
+	JEDEC_INFO("m25p80",  0x202014,  64 * 1024,  16, M25P_CAPS, 25, NULL),
+	JEDEC_INFO("m25p16",  0x202015,  64 * 1024,  32, M25P_CAPS, 25, NULL),
+	JEDEC_INFO("m25p32",  0x202016,  64 * 1024,  64, M25P_CAPS, 50, NULL),
+	JEDEC_INFO("m25p64",  0x202017,  64 * 1024, 128, M25P_CAPS, 50, NULL),
+	JEDEC_INFO("m25p128", 0x202018, 256 * 1024,  64, M25P_CAPS, 50, NULL),
 
 #define M25PX_CAPS (FLASH_CAPS_READ_WRITE	| \
 		    FLASH_CAPS_READ_FAST	| \
 		    FLASH_CAPS_READ_1_1_2	| \
 		    FLASH_CAPS_WRITE_1_1_2)
-	{ "m25px32", 0x207116, 0,  64 * 1024,  64, M25PX_CAPS, 75, NULL},
-	{ "m25px64", 0x207117, 0,  64 * 1024, 128, M25PX_CAPS, 75, NULL},
+	JEDEC_INFO("m25px32", 0x207116,  64 * 1024,  64, M25PX_CAPS, 75, NULL),
+	JEDEC_INFO("m25px64", 0x207117,  64 * 1024, 128, M25PX_CAPS, 75, NULL),
 
 	/* Macronix MX25xxx
 	 *     - Support for 'FLASH_CAPS_WRITE_1_4_4' is omitted for devices
@@ -544,14 +635,14 @@ static struct flash_info __devinitdata flash_types[] = {
 		   FLASH_CAPS_READ_1_4_4	| \
 		   FLASH_CAPS_SE_4K		| \
 		   FLASH_CAPS_SE_32K)
-	{ "mx25l3255e",  0xc29e16, 0, 64 * 1024, 64,
-	  (MX25_CAPS | FLASH_CAPS_WRITE_1_4_4), 86, mx25_config},
-	{ "mx25l25635e", 0xc22019, 0, 64*1024, 512,
-	  (MX25_CAPS | FLASH_CAPS_32BITADDR | FLASH_CAPS_RESET),
-	  70, mx25_config},
-	{ "mx25l25655e", 0xc22619, 0, 64*1024, 512,
-	  (MX25_CAPS | FLASH_CAPS_32BITADDR | FLASH_CAPS_RESET),
-	  70, mx25_config},
+	JEDEC_INFO("mx25l3255e",  0xc29e16, 64 * 1024, 64,
+		   (MX25_CAPS | FLASH_CAPS_WRITE_1_4_4), 86, mx25_config),
+	JEDEC_INFO("mx25l12835f", 0xc22018, 64 * 1024, 256,
+		   (MX25_CAPS | FLASH_CAPS_RESET), 70, mx25_config),
+	JEDEC_INFO("mx25l25635e", 0xc22019, 64 * 1024, 512,
+		   (MX25_CAPS | FLASH_CAPS_RESET), 70, mx25_config),
+	JEDEC_INFO("mx25l25655e", 0xc22619, 64 * 1024, 512,
+		   (MX25_CAPS | FLASH_CAPS_RESET), 70, mx25_config),
 
 /* Micron N25Qxxx */
 #define N25Q_CAPS (FLASH_CAPS_READ_WRITE	| \
@@ -563,8 +654,10 @@ static struct flash_info __devinitdata flash_types[] = {
 		   FLASH_CAPS_WRITE_1_1_2	| \
 		   FLASH_CAPS_WRITE_1_2_2	| \
 		   FLASH_CAPS_WRITE_1_1_4	| \
-		   FLASH_CAPS_WRITE_1_4_4)
-	{ "n25q128", 0x20ba18, 0, 64 * 1024,  256, N25Q_CAPS, 108, n25q_config},
+		   FLASH_CAPS_WRITE_1_4_4	| \
+		   FLASH_CAPS_BLK_LOCKING)
+	JEDEC_INFO("n25q128", 0x20ba18, 64 * 1024,  256,
+		   N25Q_CAPS, 108, n25q_config),
 
 	/* Micron N25Q256/N25Q512/N25Q00A (32-bit ADDR devices)
 	 *
@@ -579,19 +672,19 @@ static struct flash_info __devinitdata flash_types[] = {
 	 * Tree property "reset-signal".
 	 */
 #define N25Q_32BITADDR_CAPS	((N25Q_CAPS		| \
-				  FLASH_CAPS_32BITADDR	| \
 				  FLASH_CAPS_RESET)	& \
 				 ~FLASH_CAPS_WRITE_1_4_4)
-	{ "n25q256", 0x20ba19,      0, 64 * 1024,   512,
-	  N25Q_32BITADDR_CAPS, 108, n25q_config},
-	{ "n25q512", 0x20ba20, 0x1000, 64 * 1024,  1024,
-	  N25Q_32BITADDR_CAPS, 108, n25q_config},
-	{ "n25q00a", 0x20ba21, 0x1000, 64 * 1024,  2048,
-	  N25Q_32BITADDR_CAPS, 108, n25q_config},
-
+	JEDEC_INFO("n25q256", 0x20ba19, 64 * 1024,   512,
+		   N25Q_32BITADDR_CAPS, 108, n25q_config),
+	RDID_INFO("n25q512", RDID({0x20, 0xba, 0x20, 0x10, 0x00}), 5,
+		  64 * 1024,  1024, N25Q_32BITADDR_CAPS, 108, n25q_config),
+	RDID_INFO("n25q00a", RDID({0x20, 0xba, 0x21, 0x10, 0x00}), 5,
+		  64 * 1024,  2048, N25Q_32BITADDR_CAPS, 108, n25q_config),
 
 	/* Spansion S25FLxxxP
 	 *     - 256KiB and 64KiB sector variants (identified by ext. JEDEC)
+	 *     - S25FL128Px does not support DUAL or QUAD I/O and has
+	 *       non-standard BPx locking scheme.
 	 */
 #define S25FLXXXP_CAPS (FLASH_CAPS_READ_WRITE	| \
 			FLASH_CAPS_READ_1_1_2	| \
@@ -599,13 +692,22 @@ static struct flash_info __devinitdata flash_types[] = {
 			FLASH_CAPS_READ_1_1_4	| \
 			FLASH_CAPS_READ_1_4_4	| \
 			FLASH_CAPS_WRITE_1_1_4	| \
-			FLASH_CAPS_READ_FAST)
-	{ "s25fl032p",  0x010215, 0x4d00,  64 * 1024,  64, S25FLXXXP_CAPS, 80,
-	  s25fl_config},
-	{ "s25fl129p0", 0x012018, 0x4d00, 256 * 1024,  64, S25FLXXXP_CAPS, 80,
-	  s25fl_config},
-	{ "s25fl129p1", 0x012018, 0x4d01,  64 * 1024, 256, S25FLXXXP_CAPS, 80,
-	  s25fl_config},
+			FLASH_CAPS_READ_FAST	| \
+			FLASH_CAPS_BPX_LOCKING)
+	RDID_INFO("s25fl032p", RDID({0x01, 0x02, 0x15, 0x4d, 0x00}), 5,
+		  64 * 1024,  64, S25FLXXXP_CAPS, 80, s25fl_config),
+	RDID_INFO("s25fl064p", RDID({0x01, 0x02, 0x16, 0x4d, 0x00}), 5,
+		  64 * 1024,  128, S25FLXXXP_CAPS, 80, s25fl_config),
+	RDID_INFO("s25fl128p1", RDID({0x01, 0x20, 0x18, 0x03, 0x00}), 5,
+		  256 * 1024, 64,
+		 (FLASH_CAPS_READ_WRITE | FLASH_CAPS_READ_FAST), 104, NULL),
+	RDID_INFO("s25fl128p0", RDID({0x01, 0x20, 0x18, 0x03, 0x01}), 5,
+		  64 * 1024, 256,
+		  (FLASH_CAPS_READ_WRITE | FLASH_CAPS_READ_FAST), 104, NULL),
+	RDID_INFO("s25fl129p0", RDID({0x01, 0x20, 0x18, 0x4d, 0x00}), 5,
+		  256 * 1024,  64, S25FLXXXP_CAPS, 80, s25fl_config),
+	RDID_INFO("s25fl129p1", RDID({0x01, 0x20, 0x18, 0x4d, 0x01}), 5,
+		  64 * 1024, 256, S25FLXXXP_CAPS, 80, s25fl_config),
 
 	/* Spansion S25FLxxxS
 	 *     - 256KiB and 64KiB sector variants (identified by ext. JEDEC)
@@ -614,29 +716,45 @@ static struct flash_info __devinitdata flash_types[] = {
 	 *       so this information is captured in the board's capabilities.
 	 *     - Supports 'DYB' sector protection. Depending on variant, sectors
 	 *       may default to locked state on power-on.
+	 *     - S25FL127Sx handled as S25FL128Sx
 	 */
 #define S25FLXXXS_CAPS (S25FLXXXP_CAPS		| \
 			FLASH_CAPS_RESET	| \
-			FLASH_CAPS_DYB_LOCKING)
-	{ "s25fl128s0", 0x012018, 0x0300,  256 * 1024, 64, S25FLXXXS_CAPS, 80,
-	  s25fl_config},
-	{ "s25fl128s1", 0x012018, 0x0301,  64 * 1024, 256, S25FLXXXS_CAPS, 80,
-	  s25fl_config},
-	{ "s25fl256s0", 0x010219, 0x4d00, 256 * 1024, 128,
-	  S25FLXXXS_CAPS | FLASH_CAPS_32BITADDR, 80, s25fl_config},
-	{ "s25fl256s1", 0x010219, 0x4d01,  64 * 1024, 512,
-	  S25FLXXXS_CAPS | FLASH_CAPS_32BITADDR, 80, s25fl_config},
+			FLASH_CAPS_BLK_LOCKING	| \
+			FLASH_CAPS_BPX_LOCKING)
+	RDID_INFO("s25fl128s0", RDID({0x01, 0x20, 0x18, 0x4d, 0x00, 0x80}), 6,
+		  256 * 1024, 64, S25FLXXXS_CAPS, 80, s25fl_config),
+	RDID_INFO("s25fl128s1", RDID({0x01, 0x20, 0x18, 0x4d, 0x01, 0x80}), 6,
+		  64 * 1024, 256, S25FLXXXS_CAPS, 80, s25fl_config),
+	RDID_INFO("s25fl256s0", RDID({0x01, 0x02, 0x19, 0x4d, 0x00, 0x80}), 6,
+		  256 * 1024, 128, S25FLXXXS_CAPS, 80, s25fl_config),
+	RDID_INFO("s25fl256s1", RDID({0x01, 0x02, 0x19, 0x4d, 0x01, 0x80}), 6,
+		  64 * 1024, 512, S25FLXXXS_CAPS, 80, s25fl_config),
+
+	/* Spansion S25FL1xxK */
+#define S25FL1XXK_CAPS (FLASH_CAPS_READ_WRITE	| \
+			FLASH_CAPS_READ_1_1_2	| \
+			FLASH_CAPS_READ_1_2_2	| \
+			FLASH_CAPS_READ_1_1_4	| \
+			FLASH_CAPS_READ_1_4_4	| \
+			FLASH_CAPS_READ_FAST)
+	JEDEC_INFO("s25fl116k", 0x014015, 64 * 1024,  32, S25FL1XXK_CAPS,
+		   108, s25fl_config),
+	JEDEC_INFO("s25fl132k", 0x014016, 64 * 1024,  64, S25FL1XXK_CAPS,
+		   108, s25fl_config),
+	JEDEC_INFO("s25fl164k", 0x014017, 64 * 1024, 128, S25FL1XXK_CAPS,
+		   108, s25fl_config),
 
 	/* Winbond -- w25x "blocks" are 64K, "sectors" are 4KiB */
 #define W25X_CAPS (FLASH_CAPS_READ_WRITE	| \
 		   FLASH_CAPS_READ_FAST		| \
 		   FLASH_CAPS_READ_1_1_2	| \
 		   FLASH_CAPS_WRITE_1_1_2)
-	{ "w25x40",  0xef3013, 0,  64 * 1024,   8, W25X_CAPS, 75, NULL},
-	{ "w25x80",  0xef3014, 0,  64 * 1024,  16, W25X_CAPS, 75, NULL},
-	{ "w25x16",  0xef3015, 0,  64 * 1024,  32, W25X_CAPS, 75, NULL},
-	{ "w25x32",  0xef3016, 0,  64 * 1024,  64, W25X_CAPS, 75, NULL},
-	{ "w25x64",  0xef3017, 0,  64 * 1024, 128, W25X_CAPS, 75, NULL},
+	JEDEC_INFO("w25x40", 0xef3013, 64 * 1024,   8, W25X_CAPS, 75, NULL),
+	JEDEC_INFO("w25x80", 0xef3014, 64 * 1024,  16, W25X_CAPS, 75, NULL),
+	JEDEC_INFO("w25x16", 0xef3015, 64 * 1024,  32, W25X_CAPS, 75, NULL),
+	JEDEC_INFO("w25x32", 0xef3016, 64 * 1024,  64, W25X_CAPS, 75, NULL),
+	JEDEC_INFO("w25x64", 0xef3017, 64 * 1024, 128, W25X_CAPS, 75, NULL),
 
 	/* Winbond -- w25q "blocks" are 64K, "sectors" are 4KiB */
 #define W25Q_CAPS (FLASH_CAPS_READ_WRITE	| \
@@ -645,13 +763,19 @@ static struct flash_info __devinitdata flash_types[] = {
 		   FLASH_CAPS_READ_1_2_2	| \
 		   FLASH_CAPS_READ_1_1_4	| \
 		   FLASH_CAPS_READ_1_4_4	| \
-		   FLASH_CAPS_WRITE_1_1_4)
-	{ "w25q80",  0xef4014, 0,  64 * 1024,  16, W25Q_CAPS, 80, w25q_config},
-	{ "w25q16",  0xef4015, 0,  64 * 1024,  32, W25Q_CAPS, 80, w25q_config},
-	{ "w25q32",  0xef4016, 0,  64 * 1024,  64, W25Q_CAPS, 80, w25q_config},
-	{ "w25q64",  0xef4017, 0,  64 * 1024, 128, W25Q_CAPS, 80, w25q_config},
+		   FLASH_CAPS_WRITE_1_1_4       | \
+		   FLASH_CAPS_BLK_LOCKING       | \
+		   FLASH_CAPS_BPX_LOCKING)
+	JEDEC_INFO("w25q80", 0xef4014, 64 * 1024,  16,
+		   W25Q_CAPS, 80, w25q_config),
+	JEDEC_INFO("w25q16", 0xef4015, 64 * 1024,  32,
+		   W25Q_CAPS, 80, w25q_config),
+	JEDEC_INFO("w25q32", 0xef4016, 64 * 1024,  64,
+		   W25Q_CAPS, 80, w25q_config),
+	JEDEC_INFO("w25q64", 0xef4017, 64 * 1024, 128,
+		   W25Q_CAPS, 80, w25q_config),
 
-	{     NULL,  0x000000, 0,         0,   0,       0, },
+	{ },
 };
 
 /*
@@ -675,12 +799,11 @@ static struct flash_info __devinitdata flash_types[] = {
  *
  */
 static int can_handle_soc_reset(struct stm_spi_fsm *fsm,
-				      struct flash_info *info)
+				struct flash_info *info)
 {
 	/* Reset signal is available on the board and supported by the device */
 	if (fsm->capabilities.reset_signal &&
-	    (fsm->capabilities.reset_signal &&
-	     (info->capabilities & FLASH_CAPS_RESET)))
+	    (info->capabilities & FLASH_CAPS_RESET))
 		return 1;
 
 	/* Board-level logic forces a power-on-reset */
@@ -734,7 +857,7 @@ static struct seq_rw_config
 {
 	struct seq_rw_config *config;
 
-	for (config = configs; configs->cmd != 0; config++)
+	for (config = configs; config->cmd != 0; config++)
 		if ((config->capabilities & capabilities) ==
 		    config->capabilities)
 			return config;
@@ -839,39 +962,232 @@ static int fsm_search_configure_rw_seq(struct stm_spi_fsm *fsm,
 
 /* [DEFAULT] Configure READ/WRITE/ERASE sequences */
 static int fsm_config_rwe_seqs_default(struct stm_spi_fsm *fsm,
-				      struct flash_info *info)
+				       struct flash_info *info)
 {
-	uint32_t capabilities = info->capabilities;
-
-	/* Mask-out capabilities not supported by platform */
-	if (fsm->capabilities.quad_mode == 0)
-		capabilities &= ~FLASH_CAPS_QUAD;
-	if (fsm->capabilities.dual_mode == 0)
-		capabilities &= ~FLASH_CAPS_DUAL;
-
 	/* Configure 'READ' sequence */
 	if (fsm_search_configure_rw_seq(fsm, &fsm_seq_read,
 					default_read_configs,
-					capabilities) != 0) {
-		dev_err(fsm->dev, "failed to configure READ sequence "
-			"according to capabilities [0x%08x]\n", capabilities);
+					info->capabilities) != 0) {
+		dev_err(fsm->dev, "failed to configure READ sequence according to capabilities [0x%08x]\n",
+			info->capabilities);
 		return 1;
 	}
 
 	/* Configure 'WRITE' sequence */
 	if (fsm_search_configure_rw_seq(fsm, &fsm_seq_write,
 					default_write_configs,
-					capabilities) != 0) {
-		dev_err(fsm->dev, "failed to configure WRITE sequence "
-			"according to capabilities [0x%08x]\n", capabilities);
+					info->capabilities) != 0) {
+		dev_err(fsm->dev, "failed to configure WRITE sequence according to capabilities [0x%08x]\n",
+			info->capabilities);
 		return 1;
 	}
 
 	/* Configure 'ERASE_SECTOR' sequence */
 	configure_erasesec_seq(&fsm_seq_erase_sector,
-			       capabilities & FLASH_CAPS_32BITADDR);
+			       info->capabilities & FLASH_CAPS_32BITADDR);
 
 	return 0;
+}
+
+/* Configure Block Lock Reg Read sequence */
+static int configure_block_rd_lock_seq(struct fsm_seq *rd_lock_seq,
+				     uint8_t rd_lock_opcode,
+				     int use_32bit_addr)
+{
+	int addr1_cycles = use_32bit_addr ? 16 : 8;
+
+	/* Read Block Lock status */
+	*rd_lock_seq = (struct fsm_seq) {
+		.data_size = TRANSFER_SIZE(4),
+		.seq_opc[0] = (SEQ_OPC_PADS_1 |
+			       SEQ_OPC_CYCLES(8) |
+			       SEQ_OPC_OPCODE(rd_lock_opcode)),
+		.addr_cfg = (ADR_CFG_CYCLES_ADD1(addr1_cycles) |
+			     ADR_CFG_PADS_1_ADD1 |
+			     ADR_CFG_CYCLES_ADD2(16) |
+			     ADR_CFG_PADS_1_ADD2),
+		.seq = {
+			FSM_INST_CMD1,
+			FSM_INST_ADD1,
+			FSM_INST_ADD2,
+			FSM_INST_DATA_READ,
+			FSM_INST_STOP,
+		},
+		.seq_cfg = (SEQ_CFG_PADS_1 |
+			    SEQ_CFG_READNOTWRITE |
+			    SEQ_CFG_CSDEASSERT |
+			    SEQ_CFG_STARTSEQ),
+	};
+
+	return 0;
+}
+
+/* Configure Block Lock Reg Write sequence */
+static int configure_block_wr_lock_seq(struct fsm_seq *wr_lock_seq,
+				     uint8_t wr_lock_opcode,
+				     int use_32bit_addr)
+{
+	int addr1_cycles = use_32bit_addr ? 16 : 8;
+
+	/* Write Block Lock status */
+	*wr_lock_seq = (struct fsm_seq) {
+		.seq_opc[0] = (SEQ_OPC_PADS_1 | SEQ_OPC_CYCLES(8) |
+			       SEQ_OPC_OPCODE(FLASH_CMD_WREN) |
+			       SEQ_OPC_CSDEASSERT),
+		.seq_opc[1] = (SEQ_OPC_PADS_1 | SEQ_OPC_CYCLES(8) |
+			       SEQ_OPC_OPCODE(wr_lock_opcode)),
+		.addr_cfg = (ADR_CFG_CYCLES_ADD1(addr1_cycles) |
+			     ADR_CFG_PADS_1_ADD1 |
+			     ADR_CFG_CYCLES_ADD2(16) |
+			     ADR_CFG_PADS_1_ADD2),
+		.seq = {
+			FSM_INST_CMD1,
+			FSM_INST_CMD2,
+			FSM_INST_ADD1,
+			FSM_INST_ADD2,
+			FSM_INST_STA_WR1,
+			FSM_INST_STOP,
+		},
+		.seq_cfg = (SEQ_CFG_PADS_1 |
+			    SEQ_CFG_READNOTWRITE |
+			    SEQ_CFG_CSDEASSERT |
+			    SEQ_CFG_STARTSEQ),
+	};
+
+	return 0;
+}
+
+/* Configure Block Lock/Unlock sequence */
+static int configure_block_lock_seq(struct fsm_seq *lock_seq,
+				    uint8_t lock_opcode,
+				    int use_32bit_addr)
+{
+	int addr1_cycles = use_32bit_addr ? 16 : 8;
+
+	/* Lock/Unlock */
+	*lock_seq = (struct fsm_seq) {
+		.seq_opc[0] = (SEQ_OPC_PADS_1 | SEQ_OPC_CYCLES(8) |
+			       SEQ_OPC_OPCODE(FLASH_CMD_WREN) |
+			       SEQ_OPC_CSDEASSERT),
+		.seq_opc[1] = (SEQ_OPC_PADS_1 | SEQ_OPC_CYCLES(8) |
+			       SEQ_OPC_OPCODE(lock_opcode)),
+		.addr_cfg = (ADR_CFG_CYCLES_ADD1(addr1_cycles) |
+			     ADR_CFG_PADS_1_ADD1 |
+			     ADR_CFG_CYCLES_ADD2(16) |
+			     ADR_CFG_PADS_1_ADD2 |
+			     ADR_CFG_CSDEASSERT_ADD2),
+		.seq = {
+			FSM_INST_CMD1,
+			FSM_INST_CMD2,
+			FSM_INST_ADD1,
+			FSM_INST_ADD2,
+			FSM_INST_STOP,
+		},
+		.seq_cfg = (SEQ_CFG_PADS_1 |
+			    SEQ_CFG_READNOTWRITE |
+			    SEQ_CFG_CSDEASSERT |
+			    SEQ_CFG_STARTSEQ),
+	};
+
+	return 0;
+}
+
+/*
+ * Configure the "BPx" Block Protection Boundaries
+ *
+ * The BPx Block Protection scheme allows an area of Flash to be protected from
+ * Write and Erase operations.  The protected area is determined by the BPx bits
+ * which define an address boundary, and the TBPROT bit which selects whether
+ * protection is active below or above the boundary.  The permissible boundary
+ * addresses are determined by the size of the device, the state of TBPROT, and
+ * the number of boundaries supported by the device.
+ *
+ * Example: BP[2-0], 8 boundaries, TBPROT = 1:
+ *                   __________________________________________________________
+ *          Device: | |  |   |     |        |             |                    |
+ *                  |_|__|___|_____|________|_____________|____________________|
+ *      Protection
+ *     from bottom: |--....->
+ *                NONE                                                       ALL
+ *                  ^ ^  ^   ^     ^        ^             ^                    ^
+ * BP[2-0]:         | |  |   |     |        |             |                    |
+ *   0 0 0 ( 0/64) -  |  |   |     |        |             |                    |
+ *   0 0 1 ( 1/64) ---   |   |     |        |             |                    |
+ *   0 1 0 ( 2/64) ------    |     |        |             |                    |
+ *   0 1 1 ( 4/64) ----------      |        |             |                    |
+ *   1 0 0 ( 8/64) ----------------         |             |                    |
+ *   1 0 1 (16/64) -------------------------              |                    |
+ *   1 1 0 (32/64) ---------------------------------------                     |
+ *   1 1 1 (64/64) ------------------------------------------------------------
+ *
+ */
+static void configure_bpx_boundaries(struct stm_spi_fsm *fsm, int tbprot,
+				     uint64_t size, int n_bnds)
+{
+	int i;
+	uint64_t bpx_size = size;
+
+	BUG_ON(n_bnds > BPX_MAX_N_BNDS);
+
+	fsm->bpx_tbprot = tbprot;
+	fsm->bpx_n_bnds = n_bnds;
+
+	fsm->bpx_bnds[0] = tbprot ? 0 : size;
+	do_div(bpx_size, (1 << (n_bnds - 2)));
+
+	for (i = 1; i < n_bnds; i++) {
+		fsm->bpx_bnds[i] = tbprot ? bpx_size : size - bpx_size;
+		bpx_size *= 2;
+	}
+}
+
+/* Print the protected region for a particular value of PBx */
+static void dump_bpx_region(struct stm_spi_fsm *fsm, uint8_t bpx)
+{
+	char bpx_str[BPX_MAX_BITS*2+1];
+	uint8_t mask = 1 << (fsm->bpx_n_bits - 1);
+	char *p;
+	int i;
+
+	p = bpx_str;
+	for (i = 0; i < fsm->bpx_n_bits; i++) {
+		*p++ = ' ';
+		*p++ = (bpx & mask) ? '1' : '0';
+		mask >>= 1;
+	}
+	*p = '\0';
+
+	pr_info("\t%s: 0x%08llx -> 0x%08llx\n", bpx_str,
+		fsm->bpx_tbprot ? 0UL : fsm->bpx_bnds[bpx],
+		fsm->bpx_tbprot ? fsm->bpx_bnds[bpx] : fsm->mtd.size);
+}
+
+/* Print the lockable regions supported by the BPx scheme */
+static void dump_bpx_regions(struct stm_spi_fsm *fsm)
+{
+	int i;
+
+	dev_info(fsm->dev, "BP[%d-0] Lockable Regions (TBPROT = %d):\n",
+		 fsm->bpx_n_bits - 1, fsm->bpx_tbprot);
+
+	for (i = 0; i < fsm->bpx_n_bnds; i++)
+		dump_bpx_region(fsm, i);
+}
+
+/* Extract BPx from the value of the status register */
+static uint8_t status_to_bpx(struct stm_spi_fsm *fsm, uint8_t status)
+{
+	uint8_t bpx = 0;
+	uint8_t mask = 1;
+	int i;
+
+	for (i = 0; i < fsm->bpx_n_bits; i++) {
+		if (status & fsm->bpx_sr_masks[i])
+			bpx |= mask;
+		mask <<= 1;
+	}
+
+	return bpx;
 }
 
 static int fsm_read_status(struct stm_spi_fsm *fsm, uint8_t cmd,
@@ -879,7 +1195,7 @@ static int fsm_read_status(struct stm_spi_fsm *fsm, uint8_t cmd,
 static int fsm_write_status(struct stm_spi_fsm *fsm, uint8_t cmd,
 			    uint16_t status, int bytes, int wait_busy);
 static int fsm_enter_32bitaddr(struct stm_spi_fsm *fsm, int enter);
-static uint8_t fsm_wait_busy(struct stm_spi_fsm *fsm);
+static uint8_t fsm_wait_busy(struct stm_spi_fsm *fsm, unsigned int max_time_ms);
 static int fsm_write_fifo(struct stm_spi_fsm *fsm,
 			  const uint32_t *buf, const uint32_t size);
 static int fsm_read_fifo(struct stm_spi_fsm *fsm,
@@ -891,32 +1207,146 @@ static int fsm_wait_seq(struct stm_spi_fsm *fsm);
 /*
  * [W25Qxxx] Configuration
  */
-#define W25Q_STATUS_QE			(0x1 << 1)
+#define W25Q_STATUS1_TB			(0x1 << 5)
+#define W25Q_STATUS1_SEC		(0x1 << 6)
+#define W25Q_STATUS2_QE			(0x1 << 1)
+#define W25Q_STATUS2_CMP		(0x1 << 6)
+#define W25Q_STATUS3_WPS		(0x1 << 2)
+
+#define W25Q16_DEVICE_ID		0x15
+#define W25Q80_DEVICE_ID		0x14
 
 static int w25q_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 {
 	uint32_t data_pads;
-	uint8_t sr1, sr2;
+	uint8_t sr1, sr2, sr3;
 	uint16_t sr_wr;
 	int update_sr;
+	int wps;
+	uint64_t size = info->sector_size * info->n_sectors;
 
 	if (fsm_config_rwe_seqs_default(fsm, info) != 0)
 		return 1;
+
+	/* WRSR must always cover STATUS register 2 to prevent loss of QUAD bit
+	 * and CMP bit state
+	 */
+	fsm->configuration |= CFG_WRSR_FORCE_16BITS;
+
+	/* Try to enable individual block locking scheme */
+	if (info->capabilities & FLASH_CAPS_BLK_LOCKING) {
+		/* Get 'WPS' bit */
+		fsm_read_status(fsm, FLASH_CMD_RDSR3, &sr3, 1);
+		wps = (sr3 & W25Q_STATUS3_WPS) ? 1 : 0;
+
+		/* Check if wps is not an arbitrary data */
+		if (wps) {
+			/* Set 'WPS' bit to 0 */
+			sr3 &= ~W25Q_STATUS3_WPS;
+			fsm_write_status(fsm, FLASH_CMD_WRSR3, sr3, 1, 1);
+
+			/* Get 'WPS' bit */
+			fsm_read_status(fsm, FLASH_CMD_RDSR3, &sr3, 1);
+			wps = (sr3 & W25Q_STATUS3_WPS) ? 1 : 0;
+
+			/* if 'WPS'= 1 => Individual block locking scheme
+			*  not supported
+			*/
+			if (wps)
+				info->capabilities &= ~FLASH_CAPS_BLK_LOCKING;
+		}
+
+		/* Enable individual block locking scheme */
+		if (!wps) {
+			/* Set 'WPS' bit to 1 */
+			sr3 |= W25Q_STATUS3_WPS;
+			fsm_write_status(fsm, FLASH_CMD_WRSR3, sr3, 1, 1);
+
+			/* Get 'WPS' bit */
+			fsm_read_status(fsm, FLASH_CMD_RDSR3, &sr3, 1);
+			wps = (sr3 & W25Q_STATUS3_WPS) ? 1 : 0;
+
+			/* if 'WPS'=0 => Individual block locking scheme
+			*  not supported
+			*/
+			if (!wps)
+				info->capabilities &= ~FLASH_CAPS_BLK_LOCKING;
+		}
+	}
+
+	/* Configure block locking support */
+	if (info->capabilities & FLASH_CAPS_BLK_LOCKING) {
+		configure_block_rd_lock_seq(&fsm_seq_rd_lock_reg,
+					    W25Q_CMD_RDLOCK, 0);
+		configure_block_lock_seq(&fsm_seq_lock,
+					 W25Q_CMD_LOCK, 0);
+		configure_block_lock_seq(&fsm_seq_unlock,
+					 W25Q_CMD_UNLOCK, 0);
+
+		/* Handle 4KiB parameter sectors at the top and the bottom */
+		fsm->p4k_bot_end = 16 * 0x1000;
+		fsm->p4k_top_start = size - (16 * 0x1000);
+
+		fsm->lock_mask = 0x1;
+		fsm->lock_val[FSM_BLOCK_UNLOCKED] = 0x0;
+		fsm->lock_val[FSM_BLOCK_LOCKED] = 0x1;
+	} else if (info->capabilities & FLASH_CAPS_BPX_LOCKING) {
+		int tbprot;
+		int secprot;
+		int cmpprot;
+
+		/* Get 'TB' and 'SEC' bits */
+		fsm_read_status(fsm, FLASH_CMD_RDSR, &sr1, 1);
+		tbprot = (sr1 & W25Q_STATUS1_TB) ? 1 : 0;
+		secprot = (sr1 & W25Q_STATUS2_CMP) ? 1 : 0;
+
+		/* Get 'CMP' bit */
+		fsm_read_status(fsm, FLASH_CMD_RDSR2, &sr2, 1);
+		cmpprot = (sr2 & W25Q_STATUS2_CMP) ? 1 : 0;
+
+		if (cmpprot || secprot) {
+			/* This scheme is not supported */
+			dev_warn(fsm->dev,
+				"Lock/unlock scheme not supported."
+				"Only schemes whith CMP=0 and SEC=0 "
+				"is supported.\n");
+
+			/* disable BPx locking support */
+			info->capabilities &= ~FLASH_CAPS_BPX_LOCKING;
+		} else {
+			/* Configure BPx bits */
+			fsm->bpx_n_bits = 3;
+			fsm->bpx_sr_masks[0] = FLASH_STATUS_BP0;
+			fsm->bpx_sr_masks[1] = FLASH_STATUS_BP1;
+			fsm->bpx_sr_masks[2] = FLASH_STATUS_BP2;
+
+			/* Configure BPx boundaries: 8 levels from top/bottom */
+			if (info->readid[2] == W25Q16_DEVICE_ID) {
+				configure_bpx_boundaries(fsm, tbprot, size, 7);
+				fsm->bpx_bnds[7] = fsm->bpx_bnds[6];
+			} else if (info->readid[2] == W25Q80_DEVICE_ID) {
+				configure_bpx_boundaries(fsm, tbprot, size, 6);
+				fsm->bpx_bnds[7] = fsm->bpx_bnds[5];
+				fsm->bpx_bnds[6] = fsm->bpx_bnds[5];
+			} else
+				configure_bpx_boundaries(fsm, tbprot, size, 8);
+		}
+	}
 
 	/* Check status of 'QE' bit, update if required. */
 	data_pads = ((fsm_seq_read.seq_cfg >> 16) & 0x3) + 1;
 	fsm_read_status(fsm, FLASH_CMD_RDSR2, &sr2, 1);
 	update_sr = 0;
 	if (data_pads == 4) {
-		if (!(sr2 & W25Q_STATUS_QE)) {
+		if (!(sr2 & W25Q_STATUS2_QE)) {
 			/* Set 'QE' */
-			sr2 |= W25Q_STATUS_QE;
+			sr2 |= W25Q_STATUS2_QE;
 			update_sr = 1;
 		}
 	} else {
-		if (sr2 & W25Q_STATUS_QE) {
+		if (sr2 &  W25Q_STATUS2_QE) {
 			/* Clear 'QE' */
-			sr2 &= ~W25Q_STATUS_QE;
+			sr2 &= ~W25Q_STATUS2_QE;
 			update_sr = 1;
 		}
 	}
@@ -927,6 +1357,13 @@ static int w25q_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 		fsm_write_status(fsm, FLASH_CMD_WRSR, sr_wr, 2, 1);
 	}
 
+#ifdef CONFIG_STM_SPI_FSM_DEBUG
+	/* Debug strings for W25Qxxx specific commands */
+	flash_cmd_strs[W25Q_CMD_RDLOCK]	= "RDLOCK";
+	flash_cmd_strs[W25Q_CMD_LOCK] = "LOCK";
+	flash_cmd_strs[W25Q_CMD_UNLOCK] = "UNLOCK";
+#endif
+
 	return 0;
 }
 
@@ -934,6 +1371,8 @@ static int w25q_config(struct stm_spi_fsm *fsm, struct flash_info *info)
  *[S25FLxxx] Configuration
  */
 #define S25FL_CONFIG_QE			(0x1 << 1)
+#define S25FL_CONFIG_TBPROT		(0x1 << 5)
+#define S25FL1XXK_DEVICE_TYPE		0x40
 
 /*
  * S25FLxxxS devices provide three ways of supporting 32-bit addressing: Bank
@@ -971,81 +1410,6 @@ static int s25fl_configure_erasesec_seq_32(struct fsm_seq *seq)
 	return 0;
 }
 
-static int s25fl_read_dyb(struct stm_spi_fsm *fsm, uint32_t offs, uint8_t *dby)
-{
-	struct fsm_seq seq = {
-		.data_size = TRANSFER_SIZE(4),
-		.seq_opc[0] = (SEQ_OPC_PADS_1 |
-			       SEQ_OPC_CYCLES(8) |
-			       SEQ_OPC_OPCODE(S25FL_CMD_DYBRD)),
-		.addr_cfg = (ADR_CFG_CYCLES_ADD1(16) |
-			     ADR_CFG_PADS_1_ADD1 |
-			     ADR_CFG_CYCLES_ADD2(16) |
-			     ADR_CFG_PADS_1_ADD2),
-		.addr1 = (offs >> 16) & 0xffff,
-		.addr2 = offs & 0xffff,
-		.seq = {
-			FSM_INST_CMD1,
-			FSM_INST_ADD1,
-			FSM_INST_ADD2,
-			FSM_INST_DATA_READ,
-			FSM_INST_STOP,
-		},
-		.seq_cfg = (SEQ_CFG_PADS_1 |
-			    SEQ_CFG_READNOTWRITE |
-			    SEQ_CFG_CSDEASSERT |
-			    SEQ_CFG_STARTSEQ),
-	};
-	uint32_t tmp;
-
-	fsm_load_seq(fsm, &seq);
-
-	fsm_read_fifo(fsm, &tmp, 4);
-
-	*dby = (uint8_t)(tmp >> 24);
-
-	fsm_wait_seq(fsm);
-
-	return 0;
-}
-
-static int s25fl_write_dyb(struct stm_spi_fsm *fsm, uint32_t offs, uint8_t dby)
-{
-	struct fsm_seq seq = {
-		.seq_opc[0] = (SEQ_OPC_PADS_1 | SEQ_OPC_CYCLES(8) |
-			       SEQ_OPC_OPCODE(FLASH_CMD_WREN) |
-			       SEQ_OPC_CSDEASSERT),
-		.seq_opc[1] = (SEQ_OPC_PADS_1 | SEQ_OPC_CYCLES(8) |
-			       SEQ_OPC_OPCODE(S25FL_CMD_DYBWR)),
-		.addr_cfg = (ADR_CFG_CYCLES_ADD1(16) |
-			     ADR_CFG_PADS_1_ADD1 |
-			     ADR_CFG_CYCLES_ADD2(16) |
-			     ADR_CFG_PADS_1_ADD2),
-		.status = (uint32_t)dby | STA_PADS_1 | STA_CSDEASSERT,
-		.addr1 = (offs >> 16) & 0xffff,
-		.addr2 = offs & 0xffff,
-		.seq = {
-			FSM_INST_CMD1,
-			FSM_INST_CMD2,
-			FSM_INST_ADD1,
-			FSM_INST_ADD2,
-			FSM_INST_STA_WR1,
-			FSM_INST_STOP,
-		},
-		.seq_cfg = (SEQ_CFG_PADS_1 |
-			    SEQ_CFG_READNOTWRITE |
-			    SEQ_CFG_CSDEASSERT |
-			    SEQ_CFG_STARTSEQ),
-	};
-
-	fsm_load_seq(fsm, &seq);
-	fsm_wait_seq(fsm);
-
-	fsm_wait_busy(fsm);
-
-	return 0;
-}
-
 static int s25fl_clear_status_reg(struct stm_spi_fsm *fsm)
 {
 	struct fsm_seq seq = {
@@ -1080,31 +1444,24 @@ static int s25fl_clear_status_reg(struct stm_spi_fsm *fsm)
 static int s25fl_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 {
 	uint32_t data_pads;
-	uint8_t sr1, cr1, dyb;
+	uint8_t sr1, cr1;
 	uint16_t sta_wr;
-	uint32_t capabilities = info->capabilities;
-	uint32_t offs;
 	int update_sr;
+	uint64_t size = info->sector_size * info->n_sectors;
 
-	/* Mask out-capabilities not supported by platform */
-	if (fsm->capabilities.quad_mode == 0)
-		capabilities &= ~FLASH_CAPS_QUAD;
-	if (fsm->capabilities.dual_mode == 0)
-		capabilities &= ~FLASH_CAPS_DUAL;
-
-	if (capabilities & FLASH_CAPS_32BITADDR) {
+	if (info->capabilities & FLASH_CAPS_32BITADDR) {
 		/*
 		 * Configure Read/Write/Erase sequences according to S25FLxxx
 		 * 32-bit address command set
 		 */
 		if (fsm_search_configure_rw_seq(fsm, &fsm_seq_read,
 						s25fl_read4_configs,
-						capabilities) != 0)
+						info->capabilities) != 0)
 			return 1;
 
 		if (fsm_search_configure_rw_seq(fsm, &fsm_seq_write,
 						s25fl_write4_configs,
-						capabilities) != 0)
+						info->capabilities) != 0)
 			return 1;
 		if (s25fl_configure_erasesec_seq_32(&fsm_seq_erase_sector) != 0)
 			return 1;
@@ -1115,25 +1472,56 @@ static int s25fl_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 			return 1;
 	}
 
-	/*
-	 * For devices that support 'DYB' sector locking, check lock status and
-	 * unlock sectors if necessary (some variants power-on with sectors
-	 * locked by default)
+	/* WRSR must always cover CONFIG register to prevent loss of QUAD bit
+	 * state
 	 */
-	if (capabilities & FLASH_CAPS_DYB_LOCKING) {
-		offs = 0;
-		for (offs = 0; offs < info->sector_size * info->n_sectors;) {
-			s25fl_read_dyb(fsm, offs, &dyb);
-			if (dyb == 0x00)
-				s25fl_write_dyb(fsm, offs, 0xff);
+	fsm->configuration |= CFG_WRSR_FORCE_16BITS;
 
-			/* Handle bottom/top 4KiB parameter sectors */
-			if ((offs < info->sector_size * 2) ||
-			    (offs >= (info->sector_size - info->n_sectors * 4)))
-				offs += 0x1000;
-			else
-				offs += 0x10000;
-		}
+	/*
+	 * S25FLxxx devices support Program and Error error flags, with the
+	 * exception of the S25FL1xxK family.
+	 */
+	if (info->readid[1] != S25FL1XXK_DEVICE_TYPE)
+		fsm->configuration |= CFG_S25FL_CHECK_ERROR_FLAGS;
+
+	/* Configure block locking support */
+	if (info->capabilities & FLASH_CAPS_BLK_LOCKING) {
+		configure_block_rd_lock_seq(&fsm_seq_rd_lock_reg,
+					    S25FL_CMD_DYBRD, 1);
+		configure_block_wr_lock_seq(&fsm_seq_wr_lock_reg,
+					    S25FL_CMD_DYBWR, 1);
+
+		/* S25FLxxx are using a read register and write register command
+		 * to lock/unlock blocks/sectors
+		 */
+		fsm->configuration |= CFG_RD_WR_LOCK_REG;
+
+		/* Handle 4KiB parameter sectors: catch-all approach to
+		 * accommodate all variants (e.g. top vs. bottom and 16 vs. 32
+		 * parameter sectors).
+		 */
+		fsm->p4k_bot_end = 32 * 0x1000;
+		fsm->p4k_top_start = size - (32 * 0x1000);
+
+		fsm->lock_mask = 0xff;
+		fsm->lock_val[FSM_BLOCK_UNLOCKED] = 0xff;
+		fsm->lock_val[FSM_BLOCK_LOCKED] = 0x00;
+
+	} else if (info->capabilities & FLASH_CAPS_BPX_LOCKING) {
+		int tbprot;
+
+		/* Get 'TBPROT' bit */
+		fsm_read_status(fsm, FLASH_CMD_RDSR2, &cr1, 1);
+		tbprot = (cr1 & S25FL_CONFIG_TBPROT) ? 1 : 0;
+
+		/* Configure BPx bits */
+		fsm->bpx_n_bits = 3;
+		fsm->bpx_sr_masks[0] = FLASH_STATUS_BP0;
+		fsm->bpx_sr_masks[1] = FLASH_STATUS_BP1;
+		fsm->bpx_sr_masks[2] = FLASH_STATUS_BP2;
+
+		/* Configure BPx boundaries: 8 levels from top/bottom */
+		configure_bpx_boundaries(fsm, tbprot, size, 8);
 	}
 
 	/* Check status of 'QE' bit, update if required. */
@@ -1158,11 +1546,6 @@ static int s25fl_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 		sta_wr = ((uint16_t)cr1  << 8) | sr1;
 		fsm_write_status(fsm, FLASH_CMD_WRSR, sta_wr, 2, 1);
 	}
-
-	/* S25FLxxx devices support Program and Error error flags.  Configure
-	 * driver to check flags and clear if necessary.
-	 */
-	fsm->configuration |= CFG_S25FL_CHECK_ERROR_FLAGS;
 
 #ifdef CONFIG_STM_SPI_FSM_DEBUG
 	/* Debug strings for S25FLxxx specific commands */
@@ -1348,31 +1731,24 @@ static int n25q_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 {
 	uint8_t vcr, sta;
 	int ret = 0;
-	uint32_t capabilities = info->capabilities;
-
-	/* Mask out-capabilities not supported by platform */
-	if (fsm->capabilities.quad_mode == 0)
-		capabilities &= ~FLASH_CAPS_QUAD;
-	if (fsm->capabilities.dual_mode == 0)
-		capabilities &= ~FLASH_CAPS_DUAL;
 
 	/*
 	 * Configure 'READ' sequence
 	 */
-	if (capabilities & FLASH_CAPS_32BITADDR)
+	if (info->capabilities & FLASH_CAPS_32BITADDR)
 		/* 32-bit addressing supported by N25Q 'READ4' commands */
 		ret = fsm_search_configure_rw_seq(fsm, &fsm_seq_read,
 						  n25q_read4_configs,
-						  capabilities);
+						  info->capabilities);
 	else
 		/* 24-bit addressing with 8 dummy cycles */
 		ret = fsm_search_configure_rw_seq(fsm, &fsm_seq_read,
 						  n25q_read3_configs,
-						  capabilities);
+						  info->capabilities);
 
 	if (ret != 0) {
-		dev_err(fsm->dev, "failed to configure READ sequence "
-			"according to capabilities [0x%08x]\n", capabilities);
+		dev_err(fsm->dev, "failed to configure READ sequence according to capabilities [0x%08x]\n",
+			info->capabilities);
 		return 1;
 	}
 
@@ -1382,10 +1758,10 @@ static int n25q_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 	 */
 	ret = fsm_search_configure_rw_seq(fsm, &fsm_seq_write,
 					  default_write_configs,
-					  capabilities);
+					  info->capabilities);
 	if (ret != 0) {
-		dev_err(fsm->dev, "failed to configure WRITE sequence "
-			"according to capabilities [0x%08x]\n", capabilities);
+		dev_err(fsm->dev, "failed to configure WRITE sequence according to capabilities [0x%08x]\n",
+			info->capabilities);
 		return 1;
 	}
 
@@ -1393,12 +1769,35 @@ static int n25q_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 	 * Configure 'ERASE_SECTOR' sequence
 	 */
 	configure_erasesec_seq(&fsm_seq_erase_sector,
-			       capabilities & FLASH_CAPS_32BITADDR);
+			       info->capabilities & FLASH_CAPS_32BITADDR);
+
+	/*
+	 * Configure block locking
+	 */
+	if (info->capabilities & FLASH_CAPS_BLK_LOCKING) {
+		int use_32bit_addr = info->capabilities & FLASH_CAPS_32BITADDR;
+		configure_block_rd_lock_seq(&fsm_seq_rd_lock_reg,
+					    N25Q_CMD_RDLOCK, use_32bit_addr);
+		configure_block_wr_lock_seq(&fsm_seq_wr_lock_reg,
+					    N25Q_CMD_WRLOCK, use_32bit_addr);
+
+		/* N25Qxxx are using a read register and write register command
+		 * to lock/unlock blocks.
+		 */
+		fsm->configuration |= CFG_RD_WR_LOCK_REG;
+
+		fsm->p4k_bot_end = 0;
+		fsm->p4k_top_start = info->sector_size * info->n_sectors;
+
+		fsm->lock_mask = 0x1;
+		fsm->lock_val[FSM_BLOCK_UNLOCKED] = 0x0;
+		fsm->lock_val[FSM_BLOCK_LOCKED] = 0x1;
+	}
 
 	/*
 	 * Configure 32-bit address support
 	 */
-	if (capabilities & FLASH_CAPS_32BITADDR) {
+	if (info->capabilities & FLASH_CAPS_32BITADDR) {
 		/* Configure 'enter_32bitaddr' FSM sequence */
 		n25q_configure_en32bitaddr_seq(&fsm_seq_en32bitaddr);
 
@@ -1410,8 +1809,9 @@ static int n25q_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 		} else {
 			/* Else, enable/disable for WRITE and ERASE operations
 			 * (READ uses special commands) */
-			fsm->configuration = (CFG_WRITE_TOGGLE32BITADDR |
-					      CFG_ERASESEC_TOGGLE32BITADDR);
+			fsm->configuration |= (CFG_WRITE_TOGGLE32BITADDR |
+					      CFG_ERASESEC_TOGGLE32BITADDR |
+					      CFG_LOCK_TOGGLE32BITADDR);
 		}
 	}
 
@@ -1439,6 +1839,8 @@ static int n25q_config(struct stm_spi_fsm *fsm, struct flash_info *info)
 	flash_cmd_strs[N25Q_CMD_WRVCR]	= "WRVCR";
 	flash_cmd_strs[N25Q_CMD_RDNVCR]	= "RDNVCR";
 	flash_cmd_strs[N25Q_CMD_WRNVCR]	= "WRNVCR";
+	flash_cmd_strs[N25Q_CMD_RDLOCK] = "RDLOCK";
+	flash_cmd_strs[N25Q_CMD_WRLOCK] = "WRLOCK";
 #endif
 
 	return ret;
@@ -1467,9 +1869,14 @@ static inline void fsm_load_seq(struct stm_spi_fsm *fsm,
 
 static int fsm_wait_seq(struct stm_spi_fsm *fsm)
 {
-	unsigned long timeo = jiffies + HZ;
+	unsigned long deadline = jiffies +
+		msecs_to_jiffies(FSM_MAX_WAIT_SEQ_MS);
+	int timeout = 0;
 
-	while (time_before(jiffies, timeo)) {
+	while (!timeout) {
+		if (time_after_eq(jiffies, deadline))
+			timeout = 1;
+
 		if (fsm_is_idle(fsm))
 			return 0;
 
@@ -1604,11 +2011,12 @@ static int fsm_write_fifo(struct stm_spi_fsm *fsm,
 /*
  * Serial Flash operations
  */
-static uint8_t fsm_wait_busy(struct stm_spi_fsm *fsm)
+static uint8_t fsm_wait_busy(struct stm_spi_fsm *fsm, unsigned int max_time_ms)
 {
 	struct fsm_seq *seq = &fsm_seq_read_status_fifo;
 	unsigned long deadline;
-	uint8_t status[4] = {0x00, 0x00, 0x00, 0x00};
+	uint32_t status;
+	int timeout = 0;
 
 	/* Use RDRS1 */
 	seq->seq_opc[0] = (SEQ_OPC_PADS_1 |
@@ -1618,27 +2026,32 @@ static uint8_t fsm_wait_busy(struct stm_spi_fsm *fsm)
 	/* Load read_status sequence */
 	fsm_load_seq(fsm, seq);
 
-	/* Repeat until busy bit is deasserted, or timeout */
-	deadline = jiffies + FLASH_MAX_BUSY_WAIT;
-	do {
+	/*
+	 * Repeat until busy bit is deasserted, or timeout, or error (S25FLxxxS)
+	 */
+	deadline = jiffies + msecs_to_jiffies(max_time_ms);
+	while (!timeout) {
 		cond_resched();
+
+		if (time_after_eq(jiffies, deadline))
+			timeout = 1;
 
 		fsm_wait_seq(fsm);
 
-		fsm_read_fifo(fsm, (uint32_t *)status, 4);
+		fsm_read_fifo(fsm, &status, 4);
 
-		if ((status[3] & FLASH_STATUS_BUSY) == 0)
+		if ((status & FLASH_STATUS_BUSY) == 0)
 			return 0;
 
 		if ((fsm->configuration & CFG_S25FL_CHECK_ERROR_FLAGS) &&
-		    ((status[3] & S25FL_STATUS_P_ERR) ||
-		     (status[3] & S25FL_STATUS_E_ERR)))
-			return status[3];
+		    ((status & S25FL_STATUS_P_ERR) ||
+		     (status & S25FL_STATUS_E_ERR)))
+			return (uint8_t)(status & 0xff);
 
-		/* Restart */
-		writel(seq->seq_cfg, fsm->base + SPI_FAST_SEQ_CFG);
-
-	} while (!time_after_eq(jiffies, deadline));
+		if (!timeout)
+			/* Restart */
+			writel(seq->seq_cfg, fsm->base + SPI_FAST_SEQ_CFG);
+	}
 
 	dev_err(fsm->dev, "timeout on wait_busy\n");
 
@@ -1648,13 +2061,15 @@ static uint8_t fsm_wait_busy(struct stm_spi_fsm *fsm)
 static int fsm_read_jedec(struct stm_spi_fsm *fsm, uint8_t *const jedec)
 {
 	const struct fsm_seq *seq = &fsm_seq_read_jedec;
-	uint32_t tmp[2];
+	uint32_t tmp[MAX_READID_LEN_ALIGNED/4];
 
 	fsm_load_seq(fsm, seq);
 
-	fsm_read_fifo(fsm, tmp, 8);
+	fsm_read_fifo(fsm, tmp, MAX_READID_LEN_ALIGNED);
 
-	memcpy(jedec, tmp, 5);
+	memcpy(jedec, tmp, MAX_READID_LEN);
+
+	fsm_wait_seq(fsm);
 
 	return 0;
 }
@@ -1698,6 +2113,31 @@ static int fsm_write_status(struct stm_spi_fsm *fsm, uint8_t cmd,
 
 	BUG_ON(bytes != 1 && bytes != 2);
 
+	/*
+	 * S25FLxxxX: auto-clearing QUAD bit issue
+	 *
+	 * A Write Status operation is achieved by a 1-byte WRSR command.
+	 * However, this seems to have the effect of clearing the QUAD bit in
+	 * the Config register (other bits in the Config register are not
+	 * affected).  As a workaround, we first read the Config register,
+	 * combine with the new Status data, and then promote to a 2-byte WRSR
+	 * command.
+	 *
+	 * W25QxxxX: auto-clearing QUAD bit and CMP bit issue
+	 *
+	 * Same workaround as S25FLxxxX
+	 */
+	if (cmd == FLASH_CMD_WRSR &&
+	    bytes == 1 &&
+	    (fsm->configuration & CFG_WRSR_FORCE_16BITS)) {
+		uint8_t cr;
+
+		fsm_read_status(fsm, FLASH_CMD_RDSR2, &cr, 1);
+
+		data = (data & 0xff) | ((uint16_t)cr << 8);
+		bytes = 2;
+	}
+
 	seq->seq_opc[1] = (SEQ_OPC_PADS_1 | SEQ_OPC_CYCLES(8) |
 			   SEQ_OPC_OPCODE(cmd));
 
@@ -1709,7 +2149,7 @@ static int fsm_write_status(struct stm_spi_fsm *fsm, uint8_t cmd,
 	fsm_wait_seq(fsm);
 
 	if (wait_busy)
-		fsm_wait_busy(fsm);
+		fsm_wait_busy(fsm, FLASH_MAX_STA_WRITE_MS);
 
 	return 0;
 }
@@ -1723,6 +2163,56 @@ static int fsm_enter_32bitaddr(struct stm_spi_fsm *fsm, int enter)
 			   SEQ_OPC_CYCLES(8) |
 			   SEQ_OPC_OPCODE(cmd) |
 			   SEQ_OPC_CSDEASSERT);
+
+	fsm_load_seq(fsm, seq);
+
+	fsm_wait_seq(fsm);
+
+	return 0;
+}
+
+static uint8_t fsm_read_lock_reg(struct stm_spi_fsm *fsm, uint32_t offs)
+{
+	struct fsm_seq *seq = &fsm_seq_rd_lock_reg;
+	uint32_t tmp;
+
+	seq->addr1 = (offs >> 16) & 0xffff;
+	seq->addr2 = offs & 0xffff;
+
+	fsm_load_seq(fsm, seq);
+
+	fsm_read_fifo(fsm, &tmp, 4);
+
+	fsm_wait_seq(fsm);
+
+	return (uint8_t)(tmp & 0xff);
+}
+
+static int fsm_write_lock_reg(struct stm_spi_fsm *fsm, uint32_t offs,
+			      uint8_t val)
+{
+	struct fsm_seq *seq = &fsm_seq_wr_lock_reg;
+
+	seq->addr1 = (offs >> 16) & 0xffff;
+	seq->addr2 = offs & 0xffff;
+	seq->status = val | STA_PADS_1 | STA_CSDEASSERT;
+
+	fsm_load_seq(fsm, seq);
+
+	fsm_wait_seq(fsm);
+
+	fsm_wait_busy(fsm, FLASH_MAX_STA_WRITE_MS);
+
+	return 0;
+}
+
+static int fsm_lock(struct stm_spi_fsm *fsm, uint32_t offs,
+		    int lock)
+{
+	struct fsm_seq *seq = lock ? &fsm_seq_lock : &fsm_seq_unlock;
+
+	seq->addr1 = (offs >> 16) & 0xffff;
+	seq->addr2 = offs & 0xffff;
 
 	fsm_load_seq(fsm, seq);
 
@@ -1751,7 +2241,7 @@ static int fsm_erase_sector(struct stm_spi_fsm *fsm, const uint32_t offset)
 	fsm_wait_seq(fsm);
 
 	/* Wait for completion */
-	sta = fsm_wait_busy(fsm);
+	sta = fsm_wait_busy(fsm, FLASH_MAX_STA_WRITE_MS);
 	if (sta != 0) {
 		ret = 1;
 		if (fsm->configuration & CFG_S25FL_CHECK_ERROR_FLAGS)
@@ -1784,7 +2274,7 @@ static int fsm_erase_chip(struct stm_spi_fsm *fsm)
 
 	fsm_wait_seq(fsm);
 
-	fsm_wait_busy(fsm);
+	fsm_wait_busy(fsm, FLASH_MAX_CHIP_ERASE_MS);
 
 	return 0;
 }
@@ -1933,7 +2423,7 @@ static int fsm_write(struct stm_spi_fsm *fsm, const uint8_t *const buf,
 	fsm_wait_seq(fsm);
 
 	/* Wait for completion */
-	sta = fsm_wait_busy(fsm);
+	sta = fsm_wait_busy(fsm, FLASH_MAX_PAGE_WRITE_MS);
 	if (sta != 0) {
 		ret = 1;
 		if (fsm->configuration & CFG_S25FL_CHECK_ERROR_FLAGS)
@@ -1956,6 +2446,174 @@ static int fsm_write(struct stm_spi_fsm *fsm, const uint8_t *const buf,
 	return ret;
 }
 
+static int fsm_xxlock_oneblock(struct stm_spi_fsm *fsm, loff_t offs, int lock)
+{
+	uint8_t msk;
+	uint8_t val;
+	uint8_t reg;
+
+	msk = fsm->lock_mask;
+	val = lock ? fsm->lock_val[FSM_BLOCK_LOCKED] :
+		fsm->lock_val[FSM_BLOCK_UNLOCKED];
+
+	reg = fsm_read_lock_reg(fsm, offs);
+	if ((reg & msk) != val) {
+		if (fsm->configuration & CFG_RD_WR_LOCK_REG) {
+			reg = (reg & ~msk) | (val & msk);
+			fsm_write_lock_reg(fsm, offs, reg);
+		} else
+			fsm_lock(fsm, offs, lock);
+		reg = fsm_read_lock_reg(fsm, offs);
+		if ((reg & msk) != val) {
+			dev_err(fsm->dev, "Failed to %s sector at 0x%012llx\n",
+				lock ? "lock" : "unlock", offs);
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+static int fsm_xxlock_blocks(struct stm_spi_fsm *fsm, loff_t offs, uint64_t len,
+			     int lock)
+{
+	struct mtd_info *mtd = &fsm->mtd;
+	uint64_t offs_end = offs + len;
+	uint64_t p4k_bot_end = fsm->p4k_bot_end;
+	uint64_t p4k_top_start = fsm->p4k_top_start;
+
+	if (fsm->configuration & CFG_LOCK_TOGGLE32BITADDR)
+		fsm_enter_32bitaddr(fsm, 1);
+
+	while (offs < offs_end) {
+		fsm_xxlock_oneblock(fsm, offs, lock);
+
+		/* Parameter sectors have 4KiB locking granularity */
+		if (offs < p4k_bot_end || offs >= p4k_top_start)
+			offs += 0x1000;
+		else
+			offs += mtd->erasesize;
+	}
+
+	if (fsm->configuration & CFG_LOCK_TOGGLE32BITADDR)
+		fsm_enter_32bitaddr(fsm, 0);
+
+	return 0;
+}
+
+static void fsm_dump_bpx_state(struct stm_spi_fsm *fsm)
+{
+	uint8_t sr;
+	uint8_t bpx;
+
+	dev_info(fsm->dev, "BP[%d-0] Locked Region:\n", fsm->bpx_n_bits - 1);
+
+	fsm_read_status(fsm, FLASH_CMD_RDSR, &sr, 1);
+	bpx = status_to_bpx(fsm, sr);
+
+	dump_bpx_region(fsm, bpx);
+}
+
+/*
+ * BPx Block Protection scheme: Lock/Unlock
+ *
+ * Lock/Unlock requests involve moving the BPx boundary up or down:
+ *
+ *	Lock (TBPROT = 1): Move boundary down
+ *    Unlock (TBPROT = 0)        <-------|
+ *                   ____________________|____________________
+ *          Device: |                    |                    |
+ *                  |____________________|____________________|
+ *                                       |
+ *    Unlock (TBPROT = 1)                |------>
+ *      Lock (TBPROT = 0): Move boundary up
+ *
+ * Returns an error if the new boundary is not supported by the BPx scheme, or
+ * if the request is not contiguous with the existing BPx state.
+ */
+static int fsm_bpx_xxlock(struct stm_spi_fsm *fsm, loff_t offs, uint64_t len,
+			  int lock)
+{
+	const char *const opstr = lock ? "lock" : "unlock";
+	uint64_t old_boundary, new_boundary;
+	int i;
+
+	uint8_t sr, bpx;
+
+	/* Get current BPx state */
+	fsm_read_status(fsm, FLASH_CMD_RDSR, &sr, 1);
+	bpx = status_to_bpx(fsm, sr);
+	old_boundary = fsm->bpx_bnds[bpx];
+
+	if ((lock && fsm->bpx_tbprot) ||
+	    (!lock && !fsm->bpx_tbprot)) {
+		/*
+		 * Lock/TBPROT=1 and Unlock/TBPROT=0: Move lock boundary up
+		 */
+
+		/* Set new boundary according to request */
+		new_boundary = offs + len;
+
+		/* Boundary already higher than new request */
+		if (new_boundary <= old_boundary)
+			goto out1;
+
+		/* Request is non-contiguous with current boundary */
+		if (offs > old_boundary)
+			goto err1;
+	} else {
+		/*
+		 * Unlock/TBPROT=1 and Lock/TBPROT=0: Move lock boundary down
+		 */
+
+		/* Set new boundary according to request */
+		new_boundary = offs;
+
+		/* Boundary already lower than new request */
+		if (new_boundary >= old_boundary)
+			goto out1;
+
+		/* Request is non-contiguous with current boundary */
+		if (offs + len < old_boundary)
+			goto err1;
+	}
+
+	/* Find a valid PBx boundary */
+	for (i = 0; i < fsm->bpx_n_bnds; i++) {
+		if (new_boundary == fsm->bpx_bnds[i]) {
+			bpx = i;
+			break;
+		}
+	}
+
+	/* Request does not match a BPx boundary */
+	if (i == fsm->bpx_n_bnds)
+		goto err2;
+
+	/* Update Status register with new BPx */
+	for (i = 0; i < fsm->bpx_n_bits; i++) {
+		if (bpx & (1 << i))
+			sr |= fsm->bpx_sr_masks[i];
+		else
+			sr &= ~fsm->bpx_sr_masks[i];
+	}
+	fsm_write_status(fsm, FLASH_CMD_WRSR, sr, 1, 1);
+
+	return 0;
+
+ err2:
+	dev_err(fsm->dev, "%s 0x%08llx -> 0x%08llx: request not compatible with BPx boundaries\n",
+		opstr, offs, offs + len);
+	return 1;
+ err1:
+	dev_err(fsm->dev, "%s 0x%08llx -> 0x%08llx: request not compatible BPx state\n",
+		opstr, offs, offs + len);
+	return -EINVAL;
+ out1:
+	dev_info(fsm->dev, "%s 0x%08llx -> 0x%08llx: already within %sed region\n",
+		 opstr, offs, offs + len, opstr);
+	return 0;
+}
 
 /*
  * FSM Configuration
@@ -1993,7 +2651,7 @@ static int fsm_set_freq(struct stm_spi_fsm *fsm, uint32_t freq)
 
 	/* Calculate clk_div: multiple of 2, round up, 2 -> 128. Note, clk_div =
 	 * 4 is not supported on some SoCs, use 6 instead */
-	clk_div = 2*((emi_freq + (2*freq - 1))/(2*freq));
+	clk_div = 2 * DIV_ROUND_UP(emi_freq, 2 * freq);
 	if (clk_div < 2)
 		clk_div = 2;
 	else if (clk_div == 4 && fsm->capabilities.no_clk_div_4)
@@ -2012,7 +2670,7 @@ static int fsm_set_freq(struct stm_spi_fsm *fsm, uint32_t freq)
 	else if (clk_div <= 10)
 		fsm->fifo_dir_delay = 1;
 	else
-		fsm->fifo_dir_delay = (clk_div + 9) / 10;
+		fsm->fifo_dir_delay = DIV_ROUND_UP(clk_div, 10);
 
 	dev_dbg(fsm->dev, "emi_clk = %uHZ, spi_freq = %uHZ, clock_div = %u\n",
 		emi_freq, freq, clk_div);
@@ -2045,7 +2703,7 @@ static int fsm_init(struct stm_spi_fsm *fsm)
 	       SPI_CFG_MIN_CS_HIGH(0x0AA) |
 	       SPI_CFG_CS_SETUPHOLD(0xa0) |
 	       SPI_CFG_DATA_HOLD(0x00), fsm->base + SPI_CONFIGDATA);
-	writel(0x0016e360, fsm->base + SPI_STATUS_WR_TIME_REG);
+	writel(0x00000001, fsm->base + SPI_STATUS_WR_TIME_REG);
 
 	/*
 	 * Set the FSM 'WAIT' delay to the minimum workable value.  Note, for
@@ -2224,43 +2882,128 @@ static int mtd_erase(struct mtd_info *mtd, struct erase_info *instr)
 	return 0;
 }
 
+/*
+ * Individual Block Locking Support
+ */
+static int fsm_mtd_lock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
+{
+	struct stm_spi_fsm *fsm = mtd->priv;
+	uint32_t block_mask = mtd->erasesize - 1;
+	int ret = 0;
+
+	dev_dbg(fsm->dev, "%s %s 0x%llx, len %lld\n", __func__,
+		"at", ofs, len);
+
+	if (ofs & block_mask || len & block_mask)
+		return -EINVAL;
+
+	mutex_lock(&fsm->lock);
+
+	ret = fsm_xxlock_blocks(fsm, ofs, len, 1);
+
+	mutex_unlock(&fsm->lock);
+
+	return ret;
+}
+
+static int fsm_mtd_unlock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
+{
+	struct stm_spi_fsm *fsm = mtd->priv;
+	uint32_t block_mask = mtd->erasesize - 1;
+	int ret = 0;
+
+	dev_dbg(fsm->dev, "%s %s 0x%llx, len %lld\n", __func__,
+		"at", ofs, len);
+
+	if (ofs & block_mask || len & block_mask)
+		return -EINVAL;
+
+	mutex_lock(&fsm->lock);
+
+	ret = fsm_xxlock_blocks(fsm, ofs, len, 0);
+
+	mutex_unlock(&fsm->lock);
+
+	return ret;
+}
+
+/*
+ * PBx Block Protection Support
+ */
+static int fsm_mtd_bpx_lock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
+{
+	struct stm_spi_fsm *fsm = mtd->priv;
+	int ret = 0;
+
+	dev_dbg(fsm->dev, "%s %s 0x%llx, len %lld\n", __func__,
+		"at", ofs, len);
+
+	mutex_lock(&fsm->lock);
+
+	ret = fsm_bpx_xxlock(fsm, ofs, len, 1);
+
+	fsm_dump_bpx_state(fsm);
+
+	mutex_unlock(&fsm->lock);
+
+	return ret;
+
+}
+
+static int fsm_mtd_bpx_unlock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
+{
+	struct stm_spi_fsm *fsm = mtd->priv;
+	int ret = 0;
+
+	dev_dbg(fsm->dev, "%s %s 0x%llx, len %lld\n", __func__,
+		"at", ofs, len);
+
+	mutex_lock(&fsm->lock);
+
+	ret = fsm_bpx_xxlock(fsm, ofs, len, 0);
+
+	fsm_dump_bpx_state(fsm);
+
+	mutex_unlock(&fsm->lock);
+
+	return ret;
+}
+
+static int cmp_flash_info_readid_len(const void *a, const void *b)
+{
+	return ((struct flash_info *)b)->readid_len -
+		((struct flash_info *)a)->readid_len;
+}
 
 static struct flash_info *__devinit fsm_jedec_probe(struct stm_spi_fsm *fsm)
 {
-	u8			id[5];
-	u32			jedec;
-	u16                     ext_jedec;
-	struct flash_info	*info;
+	uint8_t	readid[MAX_READID_LEN];
+	char readid_str[MAX_READID_LEN * 3 + 1];
+	struct flash_info *info;
 
-	/* JEDEC also defines an optional "extended device information"
-	 * string for after vendor-specific data, after the three bytes
-	 * we use here.  Supporting some chips might require using it.
-	 */
-
-	if (fsm_read_jedec(fsm, id) != 0) {
+	if (fsm_read_jedec(fsm, readid) != 0) {
 		dev_info(fsm->dev, "error reading JEDEC ID\n");
 		return NULL;
 	}
 
-	jedec = id[0];
-	jedec = jedec << 8;
-	jedec |= id[1];
-	jedec = jedec << 8;
-	jedec |= id[2];
+	hex_dump_to_buffer(readid, MAX_READID_LEN, 16, 1,
+			   readid_str, sizeof(readid_str), 0);
 
-	dev_dbg(fsm->dev, "JEDEC =  0x%08x [%02x %02x %02x %02x %02x]\n",
-		jedec, id[0], id[1], id[2], id[3], id[4]);
+	dev_dbg(fsm->dev, "READID = %s\n", readid_str);
 
-	ext_jedec = id[3] << 8 | id[4];
+	/* The 'readid' may match multiple entries in the table.  To ensure we
+	 * retrieve the most specific match, the table is sorted in order of
+	 * 'readid_len'.
+	 */
+	sort(flash_types, ARRAY_SIZE(flash_types) - 1,
+	     sizeof(struct flash_info), cmp_flash_info_readid_len, NULL);
+
 	for (info = flash_types; info->name; info++) {
-		if (info->jedec_id == jedec) {
-			if (info->ext_id != 0 && info->ext_id != ext_jedec)
-				continue;
+		if (memcmp(info->readid, readid, info->readid_len) == 0)
 			return info;
-		}
 	}
 
-	dev_err(fsm->dev, "unrecognized JEDEC id %06x\n", jedec);
+	dev_err(fsm->dev, "Unrecognized READID [%s]\n", readid_str);
 
 	return NULL;
 }
@@ -2276,6 +3019,7 @@ static int __init stm_spi_fsm_probe(struct platform_device *pdev)
 	struct resource *resource;
 	int ret = 0;
 	struct flash_info *info;
+	uint64_t size;
 	unsigned i;
 
 	/* Allocate memory for the driver structure (and zero it) */
@@ -2350,19 +3094,28 @@ static int __init stm_spi_fsm_probe(struct platform_device *pdev)
 		dev_warn(&pdev->dev, "WARNING: expecting '%s', found '%s'\n",
 			 data->name, info->name);
 
+	/* Mask-out capabilities not supported by the platform */
+	if (fsm->capabilities.quad_mode == 0)
+		info->capabilities &= ~FLASH_CAPS_QUAD;
+	if (fsm->capabilities.dual_mode == 0)
+		info->capabilities &= ~FLASH_CAPS_DUAL;
+
+	/* Determine 32-bit addressing requirement */
+	size = info->sector_size * info->n_sectors;
+	if (size > 0x1000000)
+		info->capabilities |= FLASH_CAPS_32BITADDR;
+
 	/* Configure READ/WRITE/ERASE sequences according to platform and device
 	 * capabilities.
 	 */
-	if (info->config) {
-		if (info->config(fsm, info) != 0) {
-			ret = -EINVAL;
-			goto out5;
-		}
-	} else {
-		if (fsm_config_rwe_seqs_default(fsm, info) != 0) {
-			ret = -EINVAL;
-			goto out5;
-		}
+	if (info->config)
+		ret = info->config(fsm, info);
+	else
+		ret = fsm_config_rwe_seqs_default(fsm, info);
+
+	if (ret != 0) {
+		ret = -EINVAL;
+		goto out5;
 	}
 
 	if (fsm->capabilities.boot_from_spi &&
@@ -2396,27 +3149,32 @@ static int __init stm_spi_fsm_probe(struct platform_device *pdev)
 	fsm->mtd.type = MTD_NORFLASH;
 	fsm->mtd.writesize = 4;
 	fsm->mtd.flags = MTD_CAP_NORFLASH;
-	fsm->mtd.size = info->sector_size * info->n_sectors;
+	fsm->mtd.size = size;
 	fsm->mtd.erasesize = info->sector_size;
 
 	fsm->mtd.read = mtd_read;
 	fsm->mtd.write = mtd_write;
 	fsm->mtd.erase = mtd_erase;
 
+	/* Block Locking Support: */
+	if (info->capabilities & FLASH_CAPS_BLK_LOCKING) {
+		/* - Individual Block Locking scheme */
+		fsm->mtd.lock = fsm_mtd_lock;
+		fsm->mtd.unlock = fsm_mtd_unlock;
+	} else if (info->capabilities & FLASH_CAPS_BPX_LOCKING) {
+		/* - PBx Block Protection Scheme */
+		fsm->mtd.lock = fsm_mtd_bpx_lock;
+		fsm->mtd.unlock = fsm_mtd_bpx_unlock;
+
+		dump_bpx_regions(fsm);
+		fsm_dump_bpx_state(fsm);
+	}
+
 	dev_info(&pdev->dev, "found device: %s, size = %llx (%lldMiB) "
 		 "erasesize = 0x%08x (%uKiB)\n",
 		 info->name,
 		 (long long)fsm->mtd.size, (long long)(fsm->mtd.size >> 20),
 		 fsm->mtd.erasesize, (fsm->mtd.erasesize >> 10));
-
-	/* Cap size to 16MiB if 32-bit addressing is not supported/implemented
-	 * on specific device */
-	if ((fsm->mtd.size > 16 * 1024 * 1024)  &&
-	    ((info->capabilities & FLASH_CAPS_32BITADDR) == 0)) {
-		dev_info(&pdev->dev, "reducing visibility to 16MiB "
-			 "(32-bit address mode not supported on device)\n");
-		fsm->mtd.size = 16 * 1024 * 1024;
-	}
 
 	/* Add partitions */
 	if (mtd_has_partitions()) {

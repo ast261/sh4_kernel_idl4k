@@ -31,6 +31,16 @@
 #define lpm_debug(fmt, ...)
 #endif
 
+enum stm_lpm_pio_level {
+	STM_LPM_PIO_LOW		= 0,
+	STM_LPM_PIO_HIGH	= 1 << 7
+};
+
+enum stm_lpm_pio_direction {
+	STM_LPM_PIO_INPUT	= 0,
+	STM_LPM_PIO_OUTPUT	= 1 << 5
+};
+
 /**
  * stm_lpm_driver_data - Local struct of driver
  * @lpm_mem_base[3]:	memory region mapped by driver
@@ -58,6 +68,7 @@
 
 struct stm_lpm_driver_data {
 	void * __iomem lpm_mem_base[3];
+	struct platform_device *pdev;
 	struct lpm_message fw_reply_msg;
 	struct lpm_message fw_request_msg;
 	char fw_name[20];
@@ -646,6 +657,56 @@ static int lpm_load_segment(struct stm_lpm_driver_data *lpm_drv_p,
 	return 0;
 }
 
+static int lpm_config_power_pio(void)
+{
+#ifdef CONFIG_STM_LPM_POWER_PIO
+	/* now firmware is loaded inform SBC about wake up PIO */
+	int gpio_power = CONFIG_STM_LPM_POWER_PIO;
+	struct stm_lpm_pio_setting configurepio = {0};
+	int port, pin;
+
+	port = (gpio_power & 0xFF00) >> 0x8;
+	pin = (gpio_power & 0xF0) >> 0x4;
+
+	pr_info("stm lpm: configuring gpio_power: GPIO[%d][%d]\n",
+		port, pin);
+	if (gpio_power & 1)
+		configurepio.pio_level = STM_LPM_PIO_HIGH;
+	configurepio.interrupt_enabled = 0;
+	configurepio.pio_direction = STM_LPM_PIO_OUTPUT;
+	configurepio.pio_use = STM_LPM_PIO_POWER;
+	configurepio.pio_bank = port;
+	configurepio.pio_pin = pin;
+	return stm_lpm_setup_pio(&configurepio);
+#else
+	return 0;
+#endif
+}
+
+void stm_lpm_config_reboot(enum stm_lpm_config_reboot_type type)
+{
+	switch (type) {
+	case stm_lpm_reboot_with_ddr_self_refresh:
+		writel(0x9b, lpm_drv->lpm_mem_base[2] + 0x20);
+		break;
+	case stm_lpm_reboot_with_ddr_off:
+		writel(0x30, lpm_drv->lpm_mem_base[2] + 0x20);
+		break;
+	default:
+		pr_err("%s: configuration NOT supported!\n",
+			__func__);
+	}
+}
+
+void stm_lpm_power_off(void)
+{
+	/*
+	 * Raise the command 'ENTER_PASSIVE' (i.e.: 0x5)
+	 * on the mail-box; on that the SBC will remove the power
+	 */
+	writel(0x5, lpm_drv->lpm_mem_base[1] + MBX_WRITE_STATUS1);
+}
+
 /**
  * lpm_load_fw() - Load sbc firmware
  * @fw:	pointer to firmware
@@ -696,6 +757,11 @@ static int lpm_load_fw(const struct firmware *fw,
 		err = stm_lpm_get_version(&driver_ver, &fw_ver);
 		if (likely(err == 0))
 			lpm_drv_p->fw_major_ver = fw_ver.major_comm_protocol;
+		err = lpm_config_power_pio();
+		if (err)
+			pr_err("stm_lpm: Error while configuring gpio_power\n");
+		platform_device_register_data(&lpm_drv_p->pdev->dev,
+			"stm-rtc-sbc", 0, NULL, 0);
 	}
 	/* We do not return error if caused by SBC communication */
 	return 1;
@@ -752,6 +818,8 @@ static int __init stm_lpm_probe(struct platform_device *pdev)
 		pr_err("%s: Request memory failed \n", __func__);
 		return -ENOMEM;
 	}
+
+	lpm_drv->pdev = pdev;
 
 	for (count = 0; count < 3; count++) {
 		res = platform_get_resource(pdev, IORESOURCE_MEM, count);
