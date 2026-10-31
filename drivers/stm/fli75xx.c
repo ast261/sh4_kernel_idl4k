@@ -20,13 +20,13 @@
 #include <linux/stm/pad.h>
 #include <linux/stm/sysconf.h>
 #include <linux/stm/device.h>
-#include <linux/stm/fli7510.h>
+#include <linux/stm/fli75xx.h>
 #include <asm/irq-ilc.h>
 
 
 
 /* EMI resources ---------------------------------------------------------- */
-static void fli7510_emi_power(struct stm_device_state *device_state,
+static void fli75xx_emi_power(struct stm_device_state *device_state,
 		enum stm_device_power_state power)
 {
 	int i;
@@ -43,7 +43,7 @@ static void fli7510_emi_power(struct stm_device_state *device_state,
 	return;
 }
 
-static struct platform_device fli7510_emi = {
+static struct platform_device fli75xx_emi = {
 	.name = "emi",
 	.id = -1,
 	.num_resources = 3,
@@ -60,7 +60,7 @@ static struct platform_device fli7510_emi = {
 			STM_DEVICE_SYSCONF(CFG_EMI_ROPC_STATUS,
 				16, 16, "EMI_ACK"),
 		},
-		.power = fli7510_emi_power,
+		.power = fli75xx_emi_power,
 
 	}
 };
@@ -68,16 +68,16 @@ static struct platform_device fli7510_emi = {
 
 /* NAND Resources --------------------------------------------------------- */
 
-static struct platform_device fli7510_nand_emi_device = {
+static struct platform_device fli75xx_nand_emi_device = {
 	.name			= "stm-nand-emi",
 	.dev.platform_data	= &(struct stm_plat_nand_emi_data) {
 	},
 };
 
-static struct stm_plat_nand_flex_data fli7510_nand_flex_data;
-static struct stm_plat_nand_bch_data fli7510_nand_bch_data;
+static struct stm_plat_nand_flex_data fli75xx_nand_flex_data;
+static struct stm_plat_nand_bch_data fli75xx_nand_bch_data;
 
-static struct platform_device fli7510_nandi_device = {
+static struct platform_device fli75xx_nandi_device = {
 	.num_resources		= 3,
 	.resource		= (struct resource[]) {
 		STM_PLAT_RESOURCE_MEM_NAMED("nand_mem", 0xFD101000, 0x1000),
@@ -86,46 +86,46 @@ static struct platform_device fli7510_nandi_device = {
 	},
 };
 
-void __init fli7510_configure_nand(struct stm_nand_config *config)
+void __init fli75xx_configure_nand(struct stm_nand_config *config)
 {
 	struct stm_plat_nand_emi_data *emi_data;
 
 	switch (config->driver) {
 	case stm_nand_emi:
 		/* Configure platform device for stm-nand-emi driver */
-		emi_data = fli7510_nand_emi_device.dev.platform_data;
+		emi_data = fli75xx_nand_emi_device.dev.platform_data;
 		emi_data->nr_banks = config->nr_banks;
 		emi_data->banks = config->banks;
 		emi_data->emi_rbn_gpio = config->rbn.emi_gpio;
-		platform_device_register(&fli7510_nand_emi_device);
+		platform_device_register(&fli75xx_nand_emi_device);
 		break;
 	case stm_nand_flex:
 	case stm_nand_afm:
 		/* Configure platform device for stm-nand-flex/afm driver */
 		emiss_nandi_select(STM_NANDI_HAMMING);
-		fli7510_nand_flex_data.nr_banks = config->nr_banks;
-		fli7510_nand_flex_data.banks = config->banks;
-		fli7510_nand_flex_data.flex_rbn_connected =
+		fli75xx_nand_flex_data.nr_banks = config->nr_banks;
+		fli75xx_nand_flex_data.banks = config->banks;
+		fli75xx_nand_flex_data.flex_rbn_connected =
 			config->rbn.flex_connected;
-		fli7510_nandi_device.dev.platform_data =
-			&fli7510_nand_flex_data;
-		fli7510_nandi_device.name =
+		fli75xx_nandi_device.dev.platform_data =
+			&fli75xx_nand_flex_data;
+		fli75xx_nandi_device.name =
 			(config->driver == stm_nand_flex) ?
 			"stm-nand-flex" : "stm-nand-afm";
-		platform_device_register(&fli7510_nandi_device);
+		platform_device_register(&fli75xx_nandi_device);
 		break;
 	case stm_nand_bch:
 		/* Configure device for stm-nand-bch driver */
+		/* BCH controller not available on fli7510 */
 		BUG_ON(cpu_data->type == CPU_FLI7510);
-		BUG_ON(cpu_data->cut_major < 1);
 		BUG_ON(config->nr_banks > 1);
 		emiss_nandi_select(STM_NANDI_BCH);
-		fli7510_nand_bch_data.bank = config->banks;
-		fli7510_nand_bch_data.bch_ecc_cfg = config->bch_ecc_cfg;
-		fli7510_nandi_device.dev.platform_data =
-			&fli7510_nand_bch_data;
-		fli7510_nandi_device.name = "stm-nand-bch";
-		platform_device_register(&fli7510_nandi_device);
+		fli75xx_nand_bch_data.bank = config->banks;
+		fli75xx_nand_bch_data.bch_ecc_cfg = config->bch_ecc_cfg;
+		fli75xx_nandi_device.dev.platform_data =
+			&fli75xx_nand_bch_data;
+		fli75xx_nandi_device.name = "stm-nand-bch";
+		platform_device_register(&fli75xx_nandi_device);
 		break;
 	default:
 		BUG();
@@ -172,7 +172,7 @@ static struct stm_pad_config fli7520_spifsm_pad_config = {
 	},
 };
 
-static struct platform_device fli7510_spifsm_device = {
+static struct platform_device fli75xx_spifsm_device = {
 	.name		= "stm-spi-fsm",
 	.id		= 0,
 	.num_resources	= 1,
@@ -181,28 +181,44 @@ static struct platform_device fli7510_spifsm_device = {
 	},
 };
 
-void __init fli7510_configure_spifsm(struct stm_plat_spifsm_data *data)
+void __init fli75xx_configure_spifsm(struct stm_plat_spifsm_data *data)
 {
-	fli7510_spifsm_device.dev.platform_data = data;
+	struct sysconf_field *sc = NULL;
 
-	if (cpu_data->type == CPU_FLI7510)
+	fli75xx_spifsm_device.dev.platform_data = data;
+
+	switch (cpu_data->type) {
+	case CPU_FLI7510:
+	case CPU_FLI7560:
 		data->pads = &fli7510_spifsm_pad_config;
-	else
+		sc = sysconf_claim(CFG_MODE_PIN_STATUS, 7, 8, "boot-device");
+		break;
+	case CPU_FLI7520:
+	case CPU_FLI7530:
+	case CPU_FLI7540:
 		data->pads = &fli7520_spifsm_pad_config;
+		sc = sysconf_claim(CFG_MODE_PIN_STATUS, 9, 10, "boot-device");
+		break;
+	default:
+		BUG();
+	}
 
 	/* SoC/IP Capabilities */
 	data->capabilities.quad_mode = 0;
 	data->capabilities.no_read_repeat = 1;
 	data->capabilities.no_write_repeat = 1;
 	data->capabilities.read_status_bug = spifsm_no_read_status;
+	data->capabilities.boot_from_spi = (sysconf_read(sc) == 0x2) ? 1 : 0;
 
-	platform_device_register(&fli7510_spifsm_device);
+	sysconf_release(sc);
+
+	platform_device_register(&fli75xx_spifsm_device);
 }
 
 
 /* FDMA resources --------------------------------------------------------- */
 
-static struct stm_plat_fdma_fw_regs stm_fdma_firmware_7510 = {
+static struct stm_plat_fdma_fw_regs stm_fdma_firmware_75xx = {
 	.rev_id    = 0x8000 + (0x000 << 2), /* 0x8000 */
 	.cmd_statn = 0x8000 + (0x450 << 2), /* 0x9140 */
 	.req_ctln  = 0x8000 + (0x460 << 2), /* 0x9180 */
@@ -212,7 +228,7 @@ static struct stm_plat_fdma_fw_regs stm_fdma_firmware_7510 = {
 	.daddrn    = 0x8000 + (0x564 << 2), /* 0x9590 */
 };
 
-static struct stm_plat_fdma_hw fli7510_fdma_hw = {
+static struct stm_plat_fdma_hw fli75xx_fdma_hw = {
 	.slim_regs = {
 		.id       = 0x0000 + (0x000 << 2), /* 0x0000 */
 		.ver      = 0x0000 + (0x001 << 2), /* 0x0004 */
@@ -240,9 +256,9 @@ static struct stm_plat_fdma_hw fli7510_fdma_hw = {
 	},
 };
 
-static struct stm_plat_fdma_data fli7510_fdma_platform_data = {
-	.hw = &fli7510_fdma_hw,
-	.fw = &stm_fdma_firmware_7510,
+static struct stm_plat_fdma_data fli75xx_fdma_platform_data = {
+	.hw = &fli75xx_fdma_hw,
+	.fw = &stm_fdma_firmware_75xx,
 };
 
 /*
@@ -251,7 +267,7 @@ static struct stm_plat_fdma_data fli7510_fdma_platform_data = {
  * are routed to the non-real-time fdma and output pins 32-63 are routed to the
  * real-time fdma. You must ensure that that firmware to load is named correctly
  */
-static struct platform_device fli7510_fdma_devices[] = {
+static struct platform_device fli75xx_fdma_devices[] = {
 	{
 		.name = "stm-fdma",
 		.id = 0,
@@ -260,7 +276,7 @@ static struct platform_device fli7510_fdma_devices[] = {
 			STM_PLAT_RESOURCE_MEM(0xfd910000, 0x10000),
 			STM_PLAT_RESOURCE_IRQ(ILC_IRQ(38), -1),
 		},
-		.dev.platform_data = &fli7510_fdma_platform_data,
+		.dev.platform_data = &fli75xx_fdma_platform_data,
 	}, {
 		.name = "stm-fdma",
 		.id = 1,
@@ -269,11 +285,11 @@ static struct platform_device fli7510_fdma_devices[] = {
 			STM_PLAT_RESOURCE_MEM(0xfd660000, 0x10000),
 			STM_PLAT_RESOURCE_IRQ(ILC_IRQ(36), -1),
 		},
-		.dev.platform_data = &fli7510_fdma_platform_data,
+		.dev.platform_data = &fli75xx_fdma_platform_data,
 	}
 };
 
-static struct platform_device fli7510_fdma_xbar_device = {
+static struct platform_device fli75xx_fdma_xbar_device = {
 	.name = "stm-fdma-xbar",
 	.id = -1,
 	.num_resources = 1,
@@ -286,7 +302,7 @@ static struct platform_device fli7510_fdma_xbar_device = {
 
 /* Hardware RNG resources ------------------------------------------------- */
 
-static struct platform_device fli7510_rng_hwrandom_device = {
+static struct platform_device fli75xx_rng_hwrandom_device = {
 	.name = "stm-hwrandom",
 	.id = -1,
 	.num_resources = 1,
@@ -295,7 +311,7 @@ static struct platform_device fli7510_rng_hwrandom_device = {
 	}
 };
 
-static struct platform_device fli7510_rng_devrandom_device = {
+static struct platform_device fli75xx_rng_devrandom_device = {
 	.name = "stm-rng",
 	.id = -1,
 	.num_resources = 1,
@@ -392,7 +408,7 @@ static struct platform_device fli7520_pio_devices[] = {
 	FLI75XX_PIO_ENTRY(29, 0xfd9d0000),
 };
 
-static int fli7510_pio_config(unsigned gpio,
+static int fli75xx_pio_config(unsigned gpio,
 		enum stm_pad_gpio_direction direction, int function, void *priv)
 {
 	switch (direction) {
@@ -424,7 +440,7 @@ static int fli7510_pio_config(unsigned gpio,
 
 /* MMC/SD resources ------------------------------------------------------ */
 
-static struct stm_pad_config fli7510_mmc_pad_config = {
+static struct stm_pad_config fli75xx_mmc_pad_config = {
 	.gpios_num = 15,
 	.gpios = (struct stm_pad_gpio []) {
 		STM_PAD_PIO_OUT_NAMED(23, 2, 1, "MMCCLK"),/* MMC clock */
@@ -449,19 +465,19 @@ static struct stm_pad_config fli7510_mmc_pad_config = {
 
 static int mmc_pad_resources(struct sdhci_host *sdhci)
 {
-	if (!devm_stm_pad_claim(sdhci->mmc->parent, &fli7510_mmc_pad_config,
+	if (!devm_stm_pad_claim(sdhci->mmc->parent, &fli75xx_mmc_pad_config,
 				dev_name(sdhci->mmc->parent)))
 		return -ENODEV;
 
 	return 0;
 }
 
-static struct sdhci_pltfm_data fli7510_mmc_platform_data = {
+static struct sdhci_pltfm_data fli75xx_mmc_platform_data = {
 		.init = mmc_pad_resources,
 		.quirks = SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC,
 };
 
-static struct platform_device fli7510_mmc_device = {
+static struct platform_device fli75xx_mmc_device = {
 		.name = "sdhci",
 		.id = 0,
 		.num_resources = 2,
@@ -470,11 +486,11 @@ static struct platform_device fli7510_mmc_device = {
 			STM_PLAT_RESOURCE_IRQ_NAMED("mmcirq", ILC_IRQ(109), -1),
 		},
 		.dev = {
-			.platform_data = &fli7510_mmc_platform_data,
+			.platform_data = &fli75xx_mmc_platform_data,
 		}
 };
 
-void __init fli7510_configure_mmc(void)
+void __init fli75xx_configure_mmc(void)
 {
 	struct sysconf_field *sc;
 
@@ -486,7 +502,7 @@ void __init fli7510_configure_mmc(void)
 	sc = sysconf_claim(TRS_PU_CFG_0, 0, 17, 18, "mmc");
 	sysconf_write(sc, 1);
 
-	platform_device_register(&fli7510_mmc_device);
+	platform_device_register(&fli75xx_mmc_device);
 }
 
 /* sysconf resources ------------------------------------------------------ */
@@ -496,7 +512,7 @@ void __init fli7510_configure_mmc(void)
 #define SYSCONF_REG(field) _SYSCONF_REG(#field, field)
 #define _SYSCONF_REG(name, group, num) case num: str = name; break
 
-static void fli7510_sysconf_PRB_PU_CFG_1(char *name, int size,
+static void fli75xx_sysconf_PRB_PU_CFG_1(char *name, int size,
 		int group, int num)
 {
 	char *str = "???";
@@ -512,10 +528,10 @@ static void fli7510_sysconf_PRB_PU_CFG_1(char *name, int size,
 	SYSCONF_REG(CFG_PCI_ROPC_STATUS);
 	}
 
-	strlcpy(name, size, str);
+	strlcpy(name, str, size);
 }
 
-static void fli7510_sysconf_PRB_PU_CFG_2(char *name, int size,
+static void fli75xx_sysconf_PRB_PU_CFG_2(char *name, int size,
 		int group, int num)
 {
 	char *str = "???";
@@ -531,10 +547,10 @@ static void fli7510_sysconf_PRB_PU_CFG_2(char *name, int size,
 	SYSCONF_REG(CFG_EMI_ROPC_STATUS);
 	}
 
-	strlcpy(name, size, str);
+	strlcpy(name, str, size);
 }
 
-static void fli7510_sysconf_TRS_SPARE_REGS_0(char *name, int size,
+static void fli75xx_sysconf_TRS_SPARE_REGS_0(char *name, int size,
 		int group, int num)
 {
 	char *str = "???";
@@ -550,10 +566,10 @@ static void fli7510_sysconf_TRS_SPARE_REGS_0(char *name, int size,
 	SYSCONF_REG(CFG_EXTRA_ID1_LSB);
 	}
 
-	strlcpy(name, size, str);
+	strlcpy(name, str, size);
 }
 
-static void fli7510_sysconf_TRS_SPARE_REGS_1(char *name, int size,
+static void fli75xx_sysconf_TRS_SPARE_REGS_1(char *name, int size,
 		int group, int num)
 {
 	char *str = "???";
@@ -569,10 +585,10 @@ static void fli7510_sysconf_TRS_SPARE_REGS_1(char *name, int size,
 	SYSCONF_REG(CFG_EXTRA_ID1_MSB);
 	}
 
-	strlcpy(name, size, str);
+	strlcpy(name, str, size);
 }
 
-static void fli7510_sysconf_VDEC_PU_CFG_0(char *name, int size,
+static void fli75xx_sysconf_VDEC_PU_CFG_0(char *name, int size,
 		int group, int num)
 {
 	char *str = "???";
@@ -588,10 +604,10 @@ static void fli7510_sysconf_VDEC_PU_CFG_0(char *name, int size,
 	SYSCONF_REG(CFG_INTERRUPT);
 	}
 
-	strlcpy(name, size, str);
+	strlcpy(name, str, size);
 }
 
-static void fli7510_sysconf_VDEC_PU_CFG_1(char *name, int size,
+static void fli75xx_sysconf_VDEC_PU_CFG_1(char *name, int size,
 		int group, int num)
 {
 	char *str = "???";
@@ -607,10 +623,10 @@ static void fli7510_sysconf_VDEC_PU_CFG_1(char *name, int size,
 	SYSCONF_REG(CFG_INTERRUPT_REG8);
 	}
 
-	strlcpy(name, size, str);
+	strlcpy(name, str, size);
 }
 
-static void fli7510_sysconf_VOUT_SPARE_REGS(char *name, int size,
+static void fli75xx_sysconf_VOUT_SPARE_REGS(char *name, int size,
 		int group, int num)
 {
 	char *str = "???";
@@ -625,10 +641,10 @@ static void fli7510_sysconf_VOUT_SPARE_REGS(char *name, int size,
 	SYSCONF_REG(CFG_REG7_UNUSED);
 	}
 
-	strlcpy(name, size, str);
+	strlcpy(name, str, size);
 }
 
-static void fli7510_sysconf_CKG_DDR(char *name, int size,
+static void fli75xx_sysconf_CKG_DDR(char *name, int size,
 		int group, int num)
 {
 	char *str = "???";
@@ -638,10 +654,10 @@ static void fli7510_sysconf_CKG_DDR(char *name, int size,
 	SYSCONF_REG(CKG_DDR_STATUS_PLL_DDR);
 	}
 
-	strlcpy(name, size, str);
+	strlcpy(name, str, size);
 }
 
-static void fli7510_sysconf_PCIE_SPARE_REGS(char *name, int size,
+static void fli75xx_sysconf_PCIE_SPARE_REGS(char *name, int size,
 		int group, int num)
 {
 	char *str = "???";
@@ -657,18 +673,18 @@ static void fli7510_sysconf_PCIE_SPARE_REGS(char *name, int size,
 	SYSCONF_REG(CFG_REG8_PCIE_SYS_ERR_INTERRUPT);
 	}
 
-	strlcpy(name, size, str);
+	strlcpy(name, str, size);
 }
 
 #endif
 
 #ifdef CONFIG_DEBUG_FS
-#define FLI7510_REG_NAME_FUNC(name) name
+#define FLI75XX_REG_NAME_FUNC(name) name
 #else
-#define FLI7510_REG_NAME_FUNC(name) NULL
+#define FLI75XX_REG_NAME_FUNC(name) NULL
 #endif
 
-#define FLI7510_SYSCONF_ENTRY(_id, _name, _start)			\
+#define FLI75XX_SYSCONF_ENTRY(_id, _name, _start)			\
 	{								\
 		.name = "stm-sysconf",					\
 		.id = _id,						\
@@ -684,42 +700,43 @@ static void fli7510_sysconf_PCIE_SPARE_REGS(char *name, int size,
 					.offset = 0,			\
 					.name = #_name,			\
 					.reg_name = 			\
-			 FLI7510_REG_NAME_FUNC(fli7510_sysconf_##_name),\
+			 FLI75XX_REG_NAME_FUNC(fli75xx_sysconf_##_name),\
 				},					\
 			},						\
 		},							\
 	}
 
 
-static struct platform_device fli7510_sysconf_devices[] = {
-	FLI7510_SYSCONF_ENTRY(0, PRB_PU_CFG_1, 0xfd220000),
-	FLI7510_SYSCONF_ENTRY(1, PRB_PU_CFG_2, 0xfd228000),
-	FLI7510_SYSCONF_ENTRY(2, TRS_SPARE_REGS_0, 0xfd9ec000),
-	FLI7510_SYSCONF_ENTRY(3, TRS_SPARE_REGS_1, 0xfd9f4000),
-	FLI7510_SYSCONF_ENTRY(4, VDEC_PU_CFG_0, 0xfd7a0000),
-	FLI7510_SYSCONF_ENTRY(5, VDEC_PU_CFG_1, 0xfd7c0000),
-	/* Addresss probed in fli7510_sysconf_setup() as different for ultra */
-	FLI7510_SYSCONF_ENTRY(6, VOUT_SPARE_REGS, 0xfd5e8000),
-	FLI7510_SYSCONF_ENTRY(7, CKG_DDR, 0xfde80000),
+static struct platform_device fli75xx_sysconf_devices[] = {
+	FLI75XX_SYSCONF_ENTRY(0, PRB_PU_CFG_1, 0xfd220000),
+	FLI75XX_SYSCONF_ENTRY(1, PRB_PU_CFG_2, 0xfd228000),
+	FLI75XX_SYSCONF_ENTRY(2, TRS_SPARE_REGS_0, 0xfd9ec000),
+	FLI75XX_SYSCONF_ENTRY(3, TRS_SPARE_REGS_1, 0xfd9f4000),
+	FLI75XX_SYSCONF_ENTRY(4, VDEC_PU_CFG_0, 0xfd7a0000),
+	FLI75XX_SYSCONF_ENTRY(5, VDEC_PU_CFG_1, 0xfd7c0000),
+	/* Address probed in fli75xx_sysconf_setup() as different for ultra */
+	FLI75XX_SYSCONF_ENTRY(6, VOUT_SPARE_REGS, 0xfd5e8000),
+	FLI75XX_SYSCONF_ENTRY(7, CKG_DDR, 0xfde80000),
 	/* Only present on 7540 (ultra), moves on cut 1 so probed below  */
-	FLI7510_SYSCONF_ENTRY(8, PCIE_SPARE_REGS, 0xfe1c0000),
+	FLI75XX_SYSCONF_ENTRY(8, PCIE_SPARE_REGS, 0xfe1c0000),
 };
 
 /* Only the ULTRA has the PCIE block */
-#define FLI75XX_NUM_SYSCONFS ARRAY_SIZE(fli7510_sysconf_devices) - \
+#define FLI75XX_NUM_SYSCONFS ARRAY_SIZE(fli75xx_sysconf_devices) - \
 			    (cpu_data->type != CPU_FLI7540)
 
-static void fli7510_sysconf_setup(void)
+static void fli75xx_sysconf_setup(void)
 {
-	struct resource *mem_res = &fli7510_sysconf_devices[6].resource[0];
+	struct resource *mem_res = &fli75xx_sysconf_devices[6].resource[0];
 
-	if (cpu_data->type != CPU_FLI7510) {
+	if ((cpu_data->type != CPU_FLI7510) &&
+		(cpu_data->type != CPU_FLI7560)) {
 		mem_res->start = 0xfd5d4000;
 		mem_res->end = mem_res->start + 0x20 - 1;
 
 		if (cpu_data->type == CPU_FLI7540 &&
 		    cpu_data->cut_major >= 1) {
-			mem_res = fli7510_sysconf_devices[8].resource;
+			mem_res = fli75xx_sysconf_devices[8].resource;
 			mem_res->start = 0xfe180000;
 			mem_res->end = mem_res->start + 0x20 - 1;
 		}
@@ -731,7 +748,7 @@ static void fli7510_sysconf_setup(void)
 /* Early initialisation-- --------------------------------------------------*/
 
 /* Initialise devices which are required early in the boot process. */
-void __init fli7510_early_device_init(void)
+void __init fli75xx_early_device_init(void)
 {
 	struct sysconf_field *sc;
 	unsigned long verid;
@@ -740,16 +757,11 @@ void __init fli7510_early_device_init(void)
 	unsigned long chip_revision;
 	int gpios_num;
 
-	verid = *((unsigned *)0xfd9e9078) >> 16;
-
-	if (cpu_data->type == CPU_FLI7510) {
-		if (verid != 0x1d56)
-			printk(KERN_WARNING "Wrong chip variant data, "
-					"assuming FLI7510!\n");
-		chip_variant = "510";
-	} else {
+	if (cpu_data->type == CPU_FLI7520) {
 		/* CPU should be detected as 520 so far... */
 		WARN_ON(!CPU_FLI7520);
+
+		verid = *((unsigned *)0xfd9e9078) >> 16;
 
 		switch (verid) {
 		case 0x1d60:
@@ -773,27 +785,56 @@ void __init fli7510_early_device_init(void)
 		}
 	}
 
-
 	/* Initialise PIO and sysconf drivers */
-	fli7510_sysconf_setup();
-	sysconf_early_init(fli7510_sysconf_devices, FLI75XX_NUM_SYSCONFS);
+	fli75xx_sysconf_setup();
+	sysconf_early_init(fli75xx_sysconf_devices, FLI75XX_NUM_SYSCONFS);
 
 	if (cpu_data->type == CPU_FLI7510) {
+		/* The FLI7510 and FLI7560 can only be
+		 * differentiated by devid */
+		sc = sysconf_claim(CFG_DEVICE_ID, 0, 31, "devid");
+		devid = (sysconf_read(sc) >> 12) & 0x3ff;
+		sysconf_release(sc);
+
+		switch (devid) {
+		case 0x40:
+			cpu_data->type = CPU_FLI7560;
+			chip_variant = "560";
+			break;
+		default:
+			printk(KERN_WARNING "Wrong devid, assuming FLI7510!\n");
+		case 0x3c:
+			chip_variant = "510";
+			break;
+		}
+	}
+
+	switch (cpu_data->type) {
+	case CPU_FLI7510:
+	case CPU_FLI7560:
 		gpios_num = ARRAY_SIZE(fli7510_pio_devices);
 		stm_gpio_early_init(fli7510_pio_devices, gpios_num,
-				ILC_FIRST_IRQ + ILC_NR_IRQS);
-	} else {
+					ILC_FIRST_IRQ + ILC_NR_IRQS);
+		break;
+	case CPU_FLI7520:
+	case CPU_FLI7530:
+	case CPU_FLI7540:
 		gpios_num = ARRAY_SIZE(fli7520_pio_devices);
 		stm_gpio_early_init(fli7520_pio_devices, gpios_num,
 				ILC_FIRST_IRQ + ILC_NR_IRQS);
+		break;
+	default:
+		BUG();
 	}
+
 	stm_pad_init(gpios_num * STM_GPIO_PINS_PER_PORT,
-		     -1, 0, fli7510_pio_config);
+		     -1, 0, fli75xx_pio_config);
 
 	sc = sysconf_claim(CFG_DEVICE_ID, 0, 31, "devid");
 	devid = sysconf_read(sc);
 	chip_revision = (devid >> 28);
 	boot_cpu_data.cut_major = chip_revision;
+	sysconf_release(sc);
 
 	printk(KERN_INFO "Freeman %s version %ld.x, ST40%s core\n",
 			chip_variant, chip_revision,
@@ -808,55 +849,63 @@ void __init fli7510_early_device_init(void)
 
 /* Pre-arch initialisation ------------------------------------------------ */
 
-static int __init fli7510_postcore_setup(void)
+static int __init fli75xx_postcore_setup(void)
 {
 	int result;
 	int i;
 
-	result = platform_device_register(&fli7510_emi);
+	result = platform_device_register(&fli75xx_emi);
 
-	if (cpu_data->type == CPU_FLI7510) {
+	switch (cpu_data->type) {
+	case CPU_FLI7510:
+	case CPU_FLI7560:
 		for (i = 0; i < ARRAY_SIZE(fli7510_pio_devices) &&
-				result == 0; i++) {
+						result == 0; i++) {
 			result = platform_device_register(
 					&fli7510_pio_devices[i]);
 		}
-	} else {
+		break;
+	case CPU_FLI7520:
+	case CPU_FLI7530:
+	case CPU_FLI7540:
 		for (i = 0; i < ARRAY_SIZE(fli7520_pio_devices) &&
-				result == 0; i++) {
+						result == 0; i++) {
 			/* Skip non-existing ports... */
 			if (fli7520_pio_devices[i].name)
 				result = platform_device_register(
-						&fli7520_pio_devices[i]);
+					&fli7520_pio_devices[i]);
 		}
+		break;
+	default:
+		BUG();
 	}
 
 	return result;
 }
-postcore_initcall(fli7510_postcore_setup);
+postcore_initcall(fli75xx_postcore_setup);
 
 
 
 /* Late initialisation ---------------------------------------------------- */
 
-static struct platform_device *fli7510_devices[] __initdata = {
-	&fli7510_fdma_devices[0],
-	&fli7510_fdma_devices[1],
-	&fli7510_fdma_xbar_device,
-	&fli7510_rng_hwrandom_device,
-	&fli7510_rng_devrandom_device,
+static struct platform_device *fli75xx_devices[] __initdata = {
+	&fli75xx_fdma_devices[0],
+	&fli75xx_fdma_devices[1],
+	&fli75xx_fdma_xbar_device,
+	&fli75xx_rng_hwrandom_device,
+	&fli75xx_rng_devrandom_device,
 };
 
-static int __init fli7510_devices_setup(void)
+static int __init fli75xx_devices_setup(void)
 {
 	int err;
 	int i;
 
-	err = platform_add_devices(fli7510_devices,
-				   ARRAY_SIZE(fli7510_devices));
+	err = platform_add_devices(fli75xx_devices,
+				   ARRAY_SIZE(fli75xx_devices));
 	for (i = 0; i < FLI75XX_NUM_SYSCONFS && !err; i++)
-		err = platform_device_register(fli7510_sysconf_devices + i);
+		err = platform_device_register(fli75xx_sysconf_devices + i);
 
 	return err;
 }
-device_initcall(fli7510_devices_setup);
+device_initcall(fli75xx_devices_setup);

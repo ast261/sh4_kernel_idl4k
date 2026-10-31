@@ -110,6 +110,7 @@ struct stm_plat_rtc_lpc {
 struct stm_plat_ssc_data {
 	struct stm_pad_config *pad_config;
 	void (*spi_chipselect)(struct spi_device *, int);
+	unsigned int i2c_fastmode:1;
 };
 
 
@@ -175,8 +176,22 @@ struct plat_stm_temp_data {
 #define STM_PLAT_USB_FLAGS_STRAP_16BIT			(2<<0)
 #define STM_PLAT_USB_FLAGS_STRAP_PLL			(1<<2)
 #define STM_PLAT_USB_FLAGS_OPC_MSGSIZE_CHUNKSIZE	(1<<3)
-#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_THRESHOLD128	(1<<4)
-#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_THRESHOLD256	(2<<4)
+/* Threshold values */
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_THRESHOLD_MASK  (0xf << 4)
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_THRESHOLD(x) 	(((x) & \
+			STM_PLAT_USB_FLAGS_STBUS_CONFIG_THRESHOLD_MASK) >> 4)
+
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_THRESHOLD16	(4<<4)
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_THRESHOLD128	(7<<4)
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_THRESHOLD256	(8<<4)
+/* Packets in chunk */
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_CHUNK_MASK	(0xf<<8)
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_CHUNK(x)	(((x) & \
+			STM_PLAT_USB_FLAGS_STBUS_CONFIG_CHUNK_MASK) >> 8)
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_CHUNK2		(1<<8)
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_CHUNK8		(3<<8) /* Default */
+/* LD/ST32 is default */
+#define STM_PLAT_USB_FLAGS_STBUS_CONFIG_LDST64		(1<<8)
 
 struct stm_plat_usb_data {
 	unsigned long flags;
@@ -208,6 +223,7 @@ struct stm_plat_tap_data {
 	int miphy_first, miphy_count;
 	enum miphy_mode *miphy_modes;
 	struct stm_tap_sysconf *tap_sysconf;
+	char *style_id;
 };
 
 
@@ -217,6 +233,9 @@ struct stm_plat_pcie_mp_data {
 	int miphy_first, miphy_count;
 	enum miphy_mode *miphy_modes;
 	void (*mp_select)(int port);
+	int tx_pol_inv;	/* invert polarity of TXN/TXP differential outputs */
+	int rx_pol_inv;	/* invert polarity of RXN/RXP differential inputs */
+	char *style_id;
 };
 
 
@@ -325,8 +344,14 @@ struct stm_spifsm_caps {
 	int dual_mode:1;		/* DUAL mode */
 	int quad_mode:1;		/* QUAD mode */
 
+	/* Board capabilities */
+	int reset_signal:1;		/* SoC reset routed to device reset */
+	int reset_por:1;		/* SoC reset forces device POR (e.g.
+					 *   on-board logic/controller) */
+	int boot_from_spi:1;		/* Boot device is SPI */
+
 	/* IP capabilities */
-	int addr_32bit:1;		/* 32bit addressing supported */
+	int addr_32bit:1;		/* native 32-bit addressing supported */
 	int no_poll_mode_change:1;	/* Polling MODE_CHANGE broken */
 	int no_clk_div_4:1;		/* Bug prevents ClK_DIV=4 */
 	int no_sw_reset:1;		/* S/W reset not possible */
@@ -391,6 +416,7 @@ struct stm_plat_fdma_fw_regs {
 	unsigned long cntn;
 	unsigned long saddrn;
 	unsigned long daddrn;
+	unsigned long node_size;
 };
 
 struct stm_plat_fdma_data {
