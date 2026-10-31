@@ -112,14 +112,14 @@ static struct mali_kernel_subsystem mali_subsystem_core =
 
 static struct mali_kernel_subsystem * subsystems[] =
 {
-	/* always initialize the hw subsystems first */
-	/* always included */
-	&mali_subsystem_memory,
 
 #if USING_MALI_PMM
 	/* The PMM must be initialized before any cores - including L2 cache */
 	&mali_subsystem_pmm,
 #endif
+
+	/* always included */
+	&mali_subsystem_memory,
 
 	/* The rendercore subsystem must be initialized before any subsystem based on the
 	 * rendercores is started e.g. mali_subsystem_mali200 and mali_subsystem_gp2 */
@@ -161,7 +161,7 @@ _mali_osk_errcode_t mali_kernel_constructor( void )
 {
     _mali_osk_errcode_t err;
 
-	err = mali_platform_init(NULL);
+	err = mali_platform_init();
 	if (_MALI_OSK_ERR_OK != err) goto error1;
 
     err = _mali_osk_init();
@@ -184,7 +184,7 @@ error3:
     _mali_osk_term();
 error2:
 	MALI_PRINT(("Mali device driver init failed\n"));
-	if (_MALI_OSK_ERR_OK != mali_platform_deinit(NULL))
+	if (_MALI_OSK_ERR_OK != mali_platform_deinit())
 	{
 		MALI_PRINT(("Failed to deinit platform\n"));
 	}
@@ -198,10 +198,13 @@ void mali_kernel_destructor( void )
 {
 	MALI_DEBUG_PRINT(2, ("\n"));
 	MALI_DEBUG_PRINT(2, ("Unloading Mali v%d device driver.\n",_MALI_API_VERSION));
+#if USING_MALI_PMM
+	malipmm_force_powerup();
+#endif
 	terminate_subsystems(); /* subsystems are responsible for their registered resources */
     _mali_osk_term();
 
-	if (_MALI_OSK_ERR_OK != mali_platform_deinit(NULL))
+	if (_MALI_OSK_ERR_OK != mali_platform_deinit())
 	{
 		MALI_PRINT(("Failed to deinit platform\n"));
 	}

@@ -17,6 +17,7 @@
 #include <linux/lirc.h>
 #include <linux/device.h>
 #include <linux/gpio.h>
+#include <linux/clkdev.h>
 #include <linux/spi/spi.h>
 #include <linux/stm/pad.h>
 #include <linux/stm/nand.h>
@@ -88,6 +89,7 @@ struct stm_plat_asc_data {
 	int hw_flow_control:1;
 	int txfifo_bug:1;
 	struct stm_pad_config *pad_config;
+	char *clk_id;
 };
 
 extern int stm_asc_console_device;
@@ -100,6 +102,7 @@ struct stm_plat_rtc_lpc {
 	unsigned int need_wdt_reset:1;	/* W/A on 7141 */
 	unsigned char irq_edge_level;
 	char *clk_id;
+	unsigned long force_clk_rate;
 };
 
 /*** SSC platform data ***/
@@ -262,7 +265,7 @@ struct stm_plat_sysconf_group {
 	int group;
 	unsigned long offset;
 	const char *name;
-	const char *(*reg_name)(int num);
+	void (*reg_name)(char *name, int size, int group, int num);
 };
 
 struct stm_plat_sysconf_data {
@@ -280,6 +283,18 @@ struct stm_plat_nand_flex_data {
 	unsigned int flex_rbn_connected:1;
 };
 
+enum stm_nand_bch_ecc_config {
+	BCH_ECC_CFG_AUTO = 0,
+	BCH_ECC_CFG_NOECC,
+	BCH_ECC_CFG_18BIT,
+	BCH_ECC_CFG_30BIT
+};
+
+struct stm_plat_nand_bch_data {
+	struct stm_nand_bank_data *bank;
+	enum stm_nand_bch_ecc_config bch_ecc_cfg;
+};
+
 struct stm_plat_nand_emi_data {
 	unsigned int nr_banks;
 	struct stm_nand_bank_data *banks;
@@ -290,7 +305,8 @@ struct stm_nand_config {
 	enum {
 		stm_nand_emi,
 		stm_nand_flex,
-		stm_nand_afm
+		stm_nand_afm,
+		stm_nand_bch
 	} driver;
 	int nr_banks;
 	struct stm_nand_bank_data *banks;
@@ -298,6 +314,7 @@ struct stm_nand_config {
 		int emi_gpio;
 		int flex_connected;
 	} rbn;
+	enum stm_nand_bch_ecc_config bch_ecc_cfg;
 };
 
 
@@ -328,7 +345,7 @@ struct stm_plat_spifsm_data {
 	struct mtd_partition	*parts;
 	unsigned int		nr_parts;
 	unsigned int		max_freq;
-
+	struct stm_pad_config	*pads;
 	struct stm_spifsm_caps	capabilities;
 };
 
@@ -525,5 +542,21 @@ struct stm_mali_config {
 	int num_ext_resources;
 	struct stm_mali_resource *ext_mem;
 };
+
+static inline int clk_add_alias_platform_device(const char *alias,
+	struct platform_device *pdev, char *id, struct device *dev)
+{
+	char dev_name_buf[20];
+	const char *dev_name;
+
+	if (pdev->id == -1) {
+		dev_name = pdev->name;
+	} else {
+		snprintf(dev_name_buf, sizeof(dev_name_buf), "%s.%d",
+			pdev->name, pdev->id);
+		dev_name = dev_name_buf;
+	}
+	return clk_add_alias(alias, dev_name, id, dev);
+}
 
 #endif /* __LINUX_STM_PLATFORM_H */

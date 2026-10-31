@@ -49,19 +49,29 @@ COMMON_OBJS := $(addprefix ./common/, \
         mali_kernel_descriptor_mapping.o \
         mali_kernel_vsync.o )
 
-PLATFORM_OBJS := $(addprefix ./platform/default/, \
-        mali_platform.o )
-
 ifeq ($(CONFIG_CPU_SUBTYPE_STIH415)$(CONFIG_CPU_SUBTYPE_STX7108)$(CONFIG_CPU_SUBTYPE_FLI7510),y)
 
 ifeq ($(CONFIG_CPU_SUBTYPE_STIH415),y)
 SOC                      := stih415
+ifeq ($(CONFIG_PM),y)
+PLATFORM_OBJS := $(addprefix ./platform/mpe41/, \
+        mali_platform.o )
+else
+PLATFORM_OBJS := $(addprefix ./platform/default/, \
+        mali_platform.o )
+endif
 endif
 ifeq ($(CONFIG_CPU_SUBTYPE_STX7108),y)
 SOC                      := stx7108
+PLATFORM_OBJS := $(addprefix ./platform/default/, \
+        mali_platform.o )
+
 endif
 ifeq ($(CONFIG_CPU_SUBTYPE_FLI7510),y)
 SOC                      := fli75x0
+PLATFORM_OBJS := $(addprefix ./platform/default/, \
+        mali_platform.o )
+
 endif
 
 USING_MMU                := 1
@@ -75,8 +85,17 @@ USING_GP2                := 1
 ONLY_ZBT                 := 0
 USING_ZBT                := 1
 USING_OS_MEMORY          := 0
+ifeq ($(CONFIG_PM),y)
+USING_PMM                := 1
+ifeq ($(CONFIG_PM_RUNTIME),y)
+USING_MALI_RUN_TIME_PM 	 := 1
+else
+USING_MALI_RUN_TIME_PM 	 := 0
+endif
+else
 USING_PMM                := 0
 USING_MALI_RUN_TIME_PM 	 := 0
+endif
 USING_GPU_UTILIZATION  	 := 0
 USING_PROFILING        	 := 0
 TIMESTAMP              	 := default
@@ -94,6 +113,12 @@ MALI_OBJS += $(addprefix ./common/, \
         mali_block_allocator.o \
         mali_kernel_mem_os.o \
         mali_kernel_l2_cache.o)
+
+# new for r2p3
+DISABLE_PP0 := 0
+DISABLE_PP1 := 0
+DISABLE_PP2 := 0
+DISABLE_PP3 := 0
 endif
 
 ifeq ($(USING_PMM),1)
@@ -122,7 +147,7 @@ MALI_OBJS += $(addprefix ./common/, \
         mali_kernel_utilization.o
 endif
 
-MAIL_OBJS += malidrv_build_info.o
+MALI_OBJS += malidrv_build_info.o
 
 # Mali driver defines
 ccflags-y += 	-DUSING_MMU=$(USING_MMU) \
@@ -153,6 +178,12 @@ else
 ccflags-y += -DMALI_STATE_TRACKING=0
 endif
 
+# Mali driver defines new for r2p3
+ccflags-y += -DDISABLE_PP0=$(DISABLE_PP0) \
+        -DDISABLE_PP1=$(DISABLE_PP1) \
+        -DDISABLE_PP2=$(DISABLE_PP2) \
+        -DDISABLE_PP3=$(DISABLE_PP3)
+
 ifeq ($(CONFIG_STM_MALI_DEBUG),y)
 ccflags-y += -DDEBUG
 endif
@@ -160,14 +191,15 @@ endif
 BUILD_DATE := $(shell LANG=C /bin/date "+%a %b %d %Y %H:%m %Z")
 
 CFLAGS_malidrv_build_info.o := -DMALIDRV_SOC="KBUILD_STR($(SOC))"     \
-		-DMALIDRV_KERNELDIR="KBUILD_STR($(KERNELDIR))" \
+		-DMALIDRV_KERNELDIR="KBUILD_STR($(srctree))" \
 		-DMALIDRV_USING_MMU="KBUILD_STR($(USING_MMU))" \
 		-DMALIDRV_USING_UMP="KBUILD_STR($(USING_UMP))" \
-		-DMALIDRV_MMAP_CACHED_PAGES="KBUILD_STR($(MMAP_CACHED_PAGES))" \
-		-DMALIDRV_USING_MALI200="KBUILD_STR($(USING_MALI200))" \
 		-DMALIDRV_USING_MALI400="KBUILD_STR($(USING_MALI400))" \
-		-DMALIDRV_USING_MALI400L2="KBUILD_STR($(USING_MALI400L2))" \
-		-DMALIDRV_USING_MALIGP2="KBUILD_STR($(USING_MALIGP2))" \
+		-DMALIDRV_USING_MALI400_L2_CACHE="KBUILD_STR($(USING_MALI400_L2_CACHE))" \
+		-DMALIDRV_USING_MALI200="KBUILD_STR($(USING_MALI200))" \
+		-DMALIDRV_USING_MALIGP2="KBUILD_STR($(USING_GP2))" \
+		-DMALIDRV_USING_PMM="KBUILD_STR($(USING_PMM))" \
+		-DMALIDRV_USING_MALI_RUNTIME_PM="KBUILD_STR($(USING_MALI_RUN_TIME_PM))" \
 		-DMALIDRV_API_VERSION="KBUILD_STR($(API_VERSION))" \
 		-DMALIDRV_SVN_REV="KBUILD_STR($(SVN_REV))" \
 		-DMALIDRV_BUILD_DATE="KBUILD_STR($(BUILD_DATE))"
