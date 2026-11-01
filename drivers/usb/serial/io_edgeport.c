@@ -372,31 +372,24 @@ static void update_edgeport_E2PROM(struct edgeport_serial *edge_serial)
  ************************************************************************/
 static int get_string(struct usb_device *dev, int Id, char *string, int buflen)
 {
-	struct usb_string_descriptor StringDesc;
-	struct usb_string_descriptor *pStringDesc;
+	int len;
 
 	dbg("%s - USB String ID = %d", __func__, Id);
 
-	if (!usb_get_descriptor(dev, USB_DT_STRING, Id,
-					&StringDesc, sizeof(StringDesc)))
-		return 0;
-
-	pStringDesc = kmalloc(StringDesc.bLength, GFP_KERNEL);
-	if (!pStringDesc)
-		return 0;
-
-	if (!usb_get_descriptor(dev, USB_DT_STRING, Id,
-					pStringDesc, StringDesc.bLength)) {
-		kfree(pStringDesc);
+	/*
+	 * usb_string() reads the descriptor into its own DMA-able buffer
+	 * (the old code read the descriptor header into a stack variable)
+	 * and uses the device's language id.
+	 */
+	len = usb_string(dev, Id, string, buflen);
+	if (len < 0) {
+		if (buflen > 0)
+			string[0] = 0;
 		return 0;
 	}
 
-	unicode_to_ascii(string, buflen,
-				pStringDesc->wData, pStringDesc->bLength/2);
-
-	kfree(pStringDesc);
 	dbg("%s - USB String %s", __func__, string);
-	return strlen(string);
+	return len;
 }
 
 
@@ -531,18 +524,32 @@ static int get_epic_descriptor(struct edgeport_serial *ep)
 	int result;
 	struct usb_serial *serial = ep->serial;
 	struct edgeport_product_info *product_info = &ep->product_info;
-	struct edge_compatibility_descriptor *epic = &ep->epic_descriptor;
+	struct edge_compatibility_descriptor *epic;
 	struct edge_compatibility_bits *bits;
 
 	ep->is_epic = 0;
+
+	/*
+	 * Read into a separate DMA-able buffer: ep->epic_descriptor is
+	 * embedded in struct edgeport_serial and shares cache lines with
+	 * the fields around it.
+	 */
+	epic = kmalloc(sizeof(*epic), GFP_KERNEL);
+	if (!epic)
+		return -ENOMEM;
+
 	result = usb_control_msg(serial->dev, usb_rcvctrlpipe(serial->dev, 0),
 				 USB_REQUEST_ION_GET_EPIC_DESC,
 				 0xC0, 0x00, 0x00,
-				 &ep->epic_descriptor,
-				 sizeof(struct edge_compatibility_descriptor),
+				 epic, sizeof(*epic),
 				 300);
 
 	dbg("%s result = %d", __func__, result);
+
+	if (result > 0)
+		memcpy(&ep->epic_descriptor, epic, sizeof(*epic));
+	kfree(epic);
+	epic = &ep->epic_descriptor;
 
 	if (result > 0) {
 		ep->is_epic = 1;

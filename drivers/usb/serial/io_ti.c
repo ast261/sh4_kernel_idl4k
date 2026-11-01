@@ -261,14 +261,30 @@ static unsigned int edge_buf_get(struct edge_buf *eb, char *buf,
 	unsigned int count);
 
 
+/*
+ * The callers pass stack variables and fields embedded in larger
+ * structures, which are not DMA-safe.  Bounce every data stage through a
+ * kmalloc()ed buffer here instead of fixing each caller.
+ */
 static int ti_vread_sync(struct usb_device *dev, __u8 request,
 				__u16 value, __u16 index, u8 *data, int size)
 {
+	u8 *buf = NULL;
 	int status;
+
+	if (size) {
+		buf = kmalloc(size, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+	}
 
 	status = usb_control_msg(dev, usb_rcvctrlpipe(dev, 0), request,
 			(USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_DIR_IN),
-			value, index, data, size, 1000);
+			value, index, buf, size, 1000);
+	if (status > 0)
+		memcpy(data, buf, status);
+	kfree(buf);
+
 	if (status < 0)
 		return status;
 	if (status != size) {
@@ -282,11 +298,20 @@ static int ti_vread_sync(struct usb_device *dev, __u8 request,
 static int ti_vsend_sync(struct usb_device *dev, __u8 request,
 				__u16 value, __u16 index, u8 *data, int size)
 {
+	u8 *buf = NULL;
 	int status;
+
+	if (size) {
+		buf = kmemdup(data, size, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+	}
 
 	status = usb_control_msg(dev, usb_sndctrlpipe(dev, 0), request,
 			(USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_DIR_OUT),
-			value, index, data, size, 1000);
+			value, index, buf, size, 1000);
+	kfree(buf);
+
 	if (status < 0)
 		return status;
 	if (status != size) {

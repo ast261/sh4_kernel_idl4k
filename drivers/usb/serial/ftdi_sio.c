@@ -1291,24 +1291,32 @@ static int read_latency_timer(struct usb_serial_port *port)
 {
 	struct ftdi_private *priv = usb_get_serial_port_data(port);
 	struct usb_device *udev = port->serial->dev;
-	unsigned short latency = 0;
+	unsigned char *buf;
 	int rv = 0;
 
 
 	dbg("%s", __func__);
+
+	/* the transfer buffer must be DMA-able, so not on the stack */
+	buf = kmalloc(1, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	rv = usb_control_msg(udev,
 			     usb_rcvctrlpipe(udev, 0),
 			     FTDI_SIO_GET_LATENCY_TIMER_REQUEST,
 			     FTDI_SIO_GET_LATENCY_TIMER_REQUEST_TYPE,
 			     0, priv->interface,
-			     (char *) &latency, 1, WDR_TIMEOUT);
+			     buf, 1, WDR_TIMEOUT);
 
-	if (rv < 0) {
+	if (rv < 1) {
 		dev_err(&port->dev, "Unable to read latency timer: %i\n", rv);
+		kfree(buf);
 		return -EIO;
 	}
-	return latency;
+	rv = buf[0];
+	kfree(buf);
+	return rv;
 }
 
 static int get_serial_info(struct usb_serial_port *port,
@@ -2511,10 +2519,16 @@ static int ftdi_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct ftdi_private *priv = usb_get_serial_port_data(port);
-	unsigned char buf[2];
+	unsigned char *buf;
 	int ret;
 
 	dbg("%s TIOCMGET", __func__);
+
+	/* the transfer buffer must be DMA-able, so not on the stack */
+	buf = kzalloc(2, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
 	switch (priv->chip_type) {
 	case SIO:
 		/* Request the status from the device */
@@ -2525,7 +2539,7 @@ static int ftdi_tiocmget(struct tty_struct *tty, struct file *file)
 			   0, 0,
 			   buf, 1, WDR_TIMEOUT);
 		if (ret < 0)
-			return ret;
+			goto out;
 		break;
 	case FT8U232AM:
 	case FT232BM:
@@ -2543,17 +2557,21 @@ static int ftdi_tiocmget(struct tty_struct *tty, struct file *file)
 				   0, priv->interface,
 				   buf, 2, WDR_TIMEOUT);
 		if (ret < 0)
-			return ret;
+			goto out;
 		break;
 	default:
-		return -EFAULT;
+		ret = -EFAULT;
+		goto out;
 	}
 
-	return  (buf[0] & FTDI_SIO_DSR_MASK ? TIOCM_DSR : 0) |
+	ret =	(buf[0] & FTDI_SIO_DSR_MASK ? TIOCM_DSR : 0) |
 		(buf[0] & FTDI_SIO_CTS_MASK ? TIOCM_CTS : 0) |
 		(buf[0]  & FTDI_SIO_RI_MASK  ? TIOCM_RI  : 0) |
 		(buf[0]  & FTDI_SIO_RLSD_MASK ? TIOCM_CD  : 0) |
 		priv->last_dtr_rts;
+out:
+	kfree(buf);
+	return ret;
 }
 
 static int ftdi_tiocmset(struct tty_struct *tty, struct file *file,
