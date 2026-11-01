@@ -154,7 +154,9 @@ static int stmmac_phy_irqs[PHY_MAX_ADDR] = {
 static struct stmmac_mdio_bus_data stmmac1_mdio_bus = {
 	.bus_id = 1,
 	.phy_reset = idl4k_phy_reset,
-	.phy_mask = 0,
+	/* The RTL8211E also answers the broadcast address 0, which would
+	 * show up as a second PHY; scan only the strapped address. */
+	.phy_mask = ~(1 << STMMAC_PHY_ADDR),
 	.irqs = stmmac_phy_irqs,
 };
 
