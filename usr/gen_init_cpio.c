@@ -387,7 +387,7 @@ static char *cpio_replace_env(char *new_location)
 				PATH_MAX - strlen(expanded));
 			strncat(expanded, end + 1,
 				PATH_MAX - strlen(expanded));
-			strncpy(new_location, expanded, PATH_MAX);
+			strncpy(new_location, expanded, PATH_MAX + 1);
 			new_location[PATH_MAX] = 0;
 		} else
 			break;
