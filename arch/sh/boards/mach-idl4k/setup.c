@@ -282,10 +282,14 @@ static int __init device_init(void)
 	/*gpio_request(IDL4K_GPIO_VLNA_ON, "VLNA_ON");
 	gpio_direction_output(IDL4K_GPIO_VLNA_ON, 0);*/
 
+	/* 400 kHz: STV0900, STV6110A (via repeater) and 24LC64 are all
+	 * fast-mode devices */
 	/* NIM */
-	stx7108_configure_ssc_i2c(1, NULL);
+	stx7108_configure_ssc_i2c(1, &(struct stx7108_ssc_config) {
+			.i2c_fastmode = 1, });
 	/* SYS - EEPROM */
-	stx7108_configure_ssc_i2c(5, NULL);
+	stx7108_configure_ssc_i2c(5, &(struct stx7108_ssc_config) {
+			.i2c_fastmode = 1, });
 	/* NIM VLNA */
 	/*stx7108_configure_ssc_i2c(2, &(struct stx7108_ssc_config) {
 			.routing.ssc2.sclk = stx7108_ssc2_sclk_pio14_4,

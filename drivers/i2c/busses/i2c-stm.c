@@ -158,6 +158,9 @@
 #define IIC_STM_CONFIG_SPEED_FAST          0x1
 #define IIC_STM_READY_SPEED_MASK	   0x2
 #define IIC_STM_READY_SPEED_FAST	   0x2
+/* Adapter default speed (platform data / sysfs).  The per-transfer speed
+ * in IIC_STM_CONFIG_SPEED_FAST is set from this and I2C_M_FASTMODE. */
+#define IIC_STM_DEFAULT_SPEED_FAST	   0x4
 
 enum iic_state_machine {
 	IIC_FSM_VOID = 0,
@@ -862,9 +865,10 @@ iic_xfer_retry:
 	if (!iic_wait_free_bus(adap))
 		iic_pio_stop(adap);
 
-        adap->config &= ~IIC_STM_CONFIG_SPEED_MASK;
-        if (msgs[0].flags & I2C_M_FASTMODE)
-            adap->config |= IIC_STM_CONFIG_SPEED_FAST;
+	adap->config &= ~IIC_STM_CONFIG_SPEED_MASK;
+	if ((adap->config & IIC_STM_DEFAULT_SPEED_FAST) ||
+	    (msgs[0].flags & I2C_M_FASTMODE))
+		adap->config |= IIC_STM_CONFIG_SPEED_FAST;
 
 	iic_state_machine(0, adap);
 
@@ -1158,7 +1162,8 @@ static ssize_t iic_bus_show_fastmode(struct device *dev,
 	    container_of(dev, struct i2c_adapter, dev);
 	struct iic_ssc *iic_stm =
 	    container_of(adapter, struct iic_ssc, adapter);
-	return sprintf(buf, "%u\n", check_fastmode(iic_stm));
+	return sprintf(buf, "%u\n",
+		       !!(iic_stm->config & IIC_STM_DEFAULT_SPEED_FAST));
 }
 
 static ssize_t iic_bus_store_fastmode(struct device *dev,
@@ -1177,9 +1182,11 @@ static ssize_t iic_bus_store_fastmode(struct device *dev,
 		return ret;
 
 	if (val)
-		iic_adap->config |= IIC_STM_CONFIG_SPEED_FAST;
+		iic_adap->config |= IIC_STM_DEFAULT_SPEED_FAST |
+				    IIC_STM_CONFIG_SPEED_FAST;
 	else
-		iic_adap->config &= ~IIC_STM_CONFIG_SPEED_MASK;
+		iic_adap->config &= ~(IIC_STM_DEFAULT_SPEED_FAST |
+				      IIC_STM_CONFIG_SPEED_MASK);
 
 	return count;
 }
@@ -1247,7 +1254,8 @@ static int __init iic_stm_probe(struct platform_device *pdev)
 	i2c_stm->adapter.algo = &iic_stm_algo;
 	i2c_stm->adapter.dev.parent = &(pdev->dev);
 	if (plat_data->i2c_fastmode)
-		i2c_stm->config = IIC_STM_CONFIG_SPEED_FAST;
+		i2c_stm->config = IIC_STM_DEFAULT_SPEED_FAST |
+				  IIC_STM_CONFIG_SPEED_FAST;
 	i2c_stm->clk = clk_get(&(pdev->dev), "comms_clk");
 	if (!i2c_stm->clk) {
 		dev_err(&pdev->dev, "Comms clock not found!\n");
