@@ -1132,8 +1132,11 @@ static void iic_stm_setup_timing(struct iic_ssc *adap)
 
 	ssc_store32(adap, SSC_PRSCALER, iic_prescaler);
 	ssc_store32(adap, SSC_NOISE_SUPP_WIDTH, iic_glitch_width);
+	/* The data out filter breaks fast mode (no transfer works at any
+	 * rate with the fast timings and the default 0.5 us), so only use
+	 * it in normal mode */
 	ssc_store32(adap, SSC_NOISE_SUPP_WIDTH_DATAOUT,
-		    iic_glitch_width_dataout);
+		    check_fastmode(adap) ? 0 : iic_glitch_width_dataout);
 	ssc_store32(adap, SSC_PRSCALER_DATAOUT, iic_prescaler_dataout);
 #else
 	/* disable SSC glitch filter */
