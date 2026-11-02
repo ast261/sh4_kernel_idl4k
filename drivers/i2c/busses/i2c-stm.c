@@ -159,8 +159,9 @@
 #define IIC_STM_READY_SPEED_MASK	   0x2
 #define IIC_STM_READY_SPEED_FAST	   0x2
 /* Adapter default speed (platform data / sysfs).  The per-transfer speed
- * in IIC_STM_CONFIG_SPEED_FAST is set from this and I2C_M_FASTMODE. */
-#define IIC_STM_DEFAULT_SPEED_FAST	   0x4
+ * in IIC_STM_CONFIG_SPEED_FAST is set from this and I2C_M_FASTMODE.
+ * 0x4 is taken by LAST_I2C_WAS_NO_STOP (NOSTOP API). */
+#define IIC_STM_DEFAULT_SPEED_FAST	   0x8
 
 enum iic_state_machine {
 	IIC_FSM_VOID = 0,
