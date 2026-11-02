@@ -249,6 +249,8 @@ struct analog_demod_ops {
 	int (*set_config)(struct dvb_frontend *fe, void *priv_cfg);
 };
 
+#define MAX_DELSYS	8
+
 struct dvb_frontend_ops {
 
 	struct dvb_frontend_info info;
@@ -305,6 +307,9 @@ struct dvb_frontend_ops {
 
 	int (*set_property)(struct dvb_frontend* fe, struct dtv_property* tvp);
 	int (*get_property)(struct dvb_frontend* fe, struct dtv_property* tvp);
+
+	/* Delivery systems for DTV_ENUM_DELSYS; if empty, derived from info */
+	u8 delsys[MAX_DELSYS];
 };
 
 #define MAX_EVENT 8

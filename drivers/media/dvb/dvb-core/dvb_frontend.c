@@ -1355,6 +1355,16 @@ static void dtv_set_default_delivery_caps(const struct dvb_frontend *fe, struct 
 	const struct dvb_frontend_info *info = &fe->ops.info;
 	u32 ncaps = 0;
 
+	/* Drivers that list their delivery systems */
+	while (ncaps < MAX_DELSYS && fe->ops.delsys[ncaps]) {
+		p->u.buffer.data[ncaps] = fe->ops.delsys[ncaps];
+		ncaps++;
+	}
+	if (ncaps) {
+		p->u.buffer.len = ncaps;
+		return;
+	}
+
 	switch (info->type) {
 	case FE_QPSK:
 		p->u.buffer.data[ncaps++] = SYS_DVBS;

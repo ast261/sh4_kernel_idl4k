@@ -4960,6 +4960,7 @@ err_remove:
 }
 
 static const struct dvb_frontend_ops stv090x_ops = {
+	.delsys = { SYS_DVBS, SYS_DVBS2, SYS_DSS },
 	.info = {
 		.name			= "STV090x Multistandard",
 		.type			= FE_QPSK,
